@@ -405,14 +405,36 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	static constexpr my_vertex_t const s_cube_vertex_buffer[] =
 	{
-		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}},
-		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}},
-		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}},
-		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}},
-		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}},
-		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}},
-		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{1.0f, 1.0f, 1.0f, 1.0f}},
-		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{0.0f, 0.0f, 0.0f, 1.0f}},
+		// front, red
+		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // top, right
+		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // bottom, right
+		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // bottom, left
+		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // top, left
+		// back, green
+		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // top, right
+		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // bottom, right
+		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // bottom, left
+		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // top, left
+		// left, blue
+		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // top, right
+		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // bottom, right
+		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // bottom, left
+		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // top, left
+		// right, yellow
+		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // top, right
+		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // bottom, right
+		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // bottom, left
+		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // top, left
+		// top, magenta
+		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // top, right
+		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // bottom, right
+		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // bottom, left
+		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // top, left
+		// bottom, cyan
+		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // top, right
+		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // bottom, right
+		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // bottom, left
+		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // top, left
 	};
 	ID3D11Buffer* d3d11_vertex_buffer;
 	D3D11_BUFFER_DESC d3d11_vertex_buffer_description;
@@ -437,18 +459,24 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	static constexpr std::uint16_t const s_cube_index_buffer[] =
 	{
-		3, 1, 0,
-		2, 1, 3,
-		0, 5, 4,
-		1, 5, 0,
-		3, 4, 7,
-		0, 4, 3,
-		1, 6, 5,
-		2, 6, 1,
-		2, 7, 6,
-		3, 7, 2,
-		6, 4, 5,
-		7, 4, 6,
+		// front
+		(0 * 4) + 0, (0 * 4) + 1, (0 * 4) + 2,
+		(0 * 4) + 0, (0 * 4) + 2, (0 * 4) + 3,
+		// back
+		(1 * 4) + 0, (1 * 4) + 1, (1 * 4) + 2,
+		(1 * 4) + 0, (1 * 4) + 2, (1 * 4) + 3,
+		// left
+		(2 * 4) + 0, (2 * 4) + 1, (2 * 4) + 2,
+		(2 * 4) + 0, (2 * 4) + 2, (2 * 4) + 3,
+		// right
+		(3 * 4) + 0, (3 * 4) + 1, (3 * 4) + 2,
+		(3 * 4) + 0, (3 * 4) + 2, (3 * 4) + 3,
+		// top
+		(4 * 4) + 0, (4 * 4) + 1, (4 * 4) + 2,
+		(4 * 4) + 0, (4 * 4) + 2, (4 * 4) + 3,
+		// bottom
+		(5 * 4) + 0, (5 * 4) + 1, (5 * 4) + 2,
+		(5 * 4) + 0, (5 * 4) + 2, (5 * 4) + 3,
 	};
 	ID3D11Buffer* d3d11_index_buffer;
 	D3D11_BUFFER_DESC d3d11_index_buffer_description;

@@ -19,6 +19,6 @@ my_pixel_format_t vertex_shader_main(float4 position : POSITION, float4 color : 
 	output.m_position = mul(position, m_world);
 	output.m_position = mul(output.m_position, m_view);
 	output.m_position = mul(output.m_position, m_projection);
-	output.m_color = position;
+	output.m_color = color;
 	return output;
 }
