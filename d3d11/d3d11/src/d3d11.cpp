@@ -1,14 +1,21 @@
 #include "scope_exit.h"
 
-#include <cassert> // assert
+#include <algorithm> // std::all_of, std::fill
+#include <atomic>
+#include <cassert>
 #include <chrono>
+#include <cmath> // std::sin, std::cos
+#include <cstdint> // std::uint8_t, std::uint16_t, std::uint32_t
 #include <cstdio> // std::printf, std::puts
 #include <cstdlib> // std::exit, EXIT_SUCCESS, EXIT_FAILURE
 #include <cstring> // std::memcpy
 #include <cwchar> // std::wcslen
-#include <iterator> // std::size
+#include <iterator> // std::size, std::cbegin, std::cend, std::begin, std::end
+#include <numbers> // std::numbers::pi_v
 #include <string> // std::u8string, std::u16string
+#include <thread>
 
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <objbase.h>
 #include <dxgi.h>
@@ -20,6 +27,7 @@
 #pragma warning(disable:4838) // Narowwing conversion.
 #include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\xnamath.h"
 #pragma warning(pop)
+#include <winsock2.h>
 
 
 #ifdef NDEBUG
@@ -65,6 +73,9 @@
 #endif
 
 
+#pragma comment(lib, "ws2_32.lib")
+
+
 struct float3_t
 {
 	float m_x;
@@ -95,6 +106,15 @@ struct my_constant_buffer_t
 };
 
 
+struct incomming_point_t
+{
+	float m_azimuth;
+	float m_x;
+	float m_y;
+	float m_z;
+};
+
+
 struct app_state_t
 {
 	ATOM m_main_window_class;
@@ -115,6 +135,9 @@ struct app_state_t
 	std::chrono::high_resolution_clock::time_point m_prev_time;
 	std::chrono::high_resolution_clock::time_point m_fps_time;
 	int m_fps_count;
+	std::atomic<bool> m_thread_end_requested;
+	incomming_point_t m_incomming_points[64 * 1024];
+	unsigned m_incomming_points_idx;
 };
 
 
@@ -135,6 +158,8 @@ bool process_message(MSG const& msg);
 bool on_idle();
 std::u8string utf16_to_utf8(std::u16string const& u16str);
 bool render();
+void network_thread_proc();
+void process_data(unsigned char const* const& data, int const& data_len);
 
 
 #define CHECK_RET(X, R) do{ if(X){}else{ [[unlikely]] check_ret_failed(__FILE__, __LINE__, #X); return R; } }while(false)
@@ -434,6 +459,10 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_d3d11_transformations.m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 	/* D3D11 */
 
+	g_app_state->m_thread_end_requested.store(false);
+	std::thread network_thread{&network_thread_proc};
+	auto const network_thread_free = mk::make_scope_exit([&](){ g_app_state->m_thread_end_requested.store(true); network_thread.join(); });
+
 	g_app_state->m_prev_time = std::chrono::high_resolution_clock::now();
 	g_app_state->m_fps_time = g_app_state->m_prev_time;
 
@@ -694,4 +723,232 @@ bool render()
 	}
 
 	return true;
+}
+
+void network_thread_proc()
+{
+	static constexpr incomming_point_t const s_incomming_point{};
+	std::fill(std::begin(g_app_state->m_incomming_points), std::end(g_app_state->m_incomming_points), s_incomming_point);
+	g_app_state->m_incomming_points_idx = 0;
+
+	WORD const wsa_version = MAKEWORD(2, 2);
+	WSADATA wsa_data;
+	int const wsa_started = WSAStartup(wsa_version, &wsa_data);
+	CHECK_RET_V(wsa_started == 0);
+	auto const wsa_free = mk::make_scope_exit([&](){ int const wsa_freed = WSACleanup(); CHECK_RET_V(wsa_freed == 0); });
+
+	int const address_family = AF_INET;
+	int const sck_type = SOCK_DGRAM;
+	int const protocol = IPPROTO_UDP;
+	SOCKET const sck = socket(address_family, sck_type, protocol);
+	CHECK_RET_V(sck != INVALID_SOCKET);
+	auto const sck_free = mk::make_scope_exit([&](){ int const sck_freed = closesocket(sck); CHECK_RET_V(sck_freed == 0); });
+
+	DWORD const receieve_timeout_ms = 10;
+	int const option_set = setsockopt(sck, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char const*>(&receieve_timeout_ms), static_cast<int>(sizeof(receieve_timeout_ms)));
+	CHECK_RET_V(option_set == 0);
+
+	static constexpr short const s_port_number = 2368;
+	sockaddr_in addr{};
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(s_port_number);
+	addr.sin_addr.S_un.S_addr = INADDR_ANY;
+	int const bound = bind(sck, reinterpret_cast<sockaddr const*>(&addr), static_cast<int>(sizeof(addr)));
+	CHECK_RET_V(bound == 0);
+
+	while(g_app_state->m_thread_end_requested.load() == false)
+	{
+		unsigned char buff[64 * 1024];
+		int const flags = 0;
+		sockaddr_in other_addr;
+		int other_addr_len = static_cast<int>(sizeof(other_addr));
+		int const receieved = recvfrom(sck, reinterpret_cast<char*>(buff), static_cast<int>(std::size(buff)), flags, reinterpret_cast<sockaddr*>(&other_addr), &other_addr_len);
+		if(receieved == 0)
+		{
+			break;
+		}
+		else if(receieved == SOCKET_ERROR)
+		{
+			int const err = WSAGetLastError();
+			CHECK_RET_V(err == WSAETIMEDOUT);
+			continue;
+		}
+		process_data(buff, receieved);
+	}
+}
+
+void process_data(unsigned char const* const& data, int const& data_len)
+{
+	#pragma push_macro("CHECK_RET")
+	#undef CHECK_RET
+	#define CHECK_RET(X) do{ if(X){}else{ [[unlikely]] return; } }while(false)
+
+
+	static constexpr int const s_lasers_count = 16;
+	static constexpr int const s_firing_sequences_per_data_block_count = 2;
+	static constexpr int const s_data_blocks_per_packet_count = 12;
+
+	static constexpr std::uint8_t const s_vlp16_id = 0x22;
+	static constexpr std::uint8_t const s_strongest_mode = 0x37;
+	static constexpr std::uint8_t const s_last_mode = 0x38;
+	static constexpr std::uint32_t const s_max_timestamp_incl = 3'599'999'999ull;
+	static constexpr std::uint16_t const s_flag = 0xEEFF;
+	static constexpr std::uint16_t const s_max_azimuth_incl = 35'999;
+
+	static constexpr double const s_firing_sequence_len_us = 55.296; // us, including recharge time
+	static constexpr double const s_firing_delay_us = 2.304; // us
+
+
+	static constexpr double const s_vertical_angle_cos[] =
+	{
+		0x1.ee8dd4748bf15p-1 /* cos( -15 deg ) */,
+		0x1.ffec097f5af8ap-1 /* cos(  +1 deg ) */,
+		0x1.f2e0a214e870fp-1 /* cos( -13 deg ) */,
+		0x1.ff4c5ed12e61dp-1 /* cos(  +3 deg ) */,
+		0x1.f697d6938b6c2p-1 /* cos( -11 deg ) */,
+		0x1.fe0d3b41815a2p-1 /* cos(  +5 deg ) */,
+		0x1.f9b24942fe45cp-1 /* cos(  -9 deg ) */,
+		0x1.fc2f025a23e8bp-1 /* cos(  +7 deg ) */,
+		0x1.fc2f025a23e8bp-1 /* cos(  -7 deg ) */,
+		0x1.f9b24942fe45cp-1 /* cos(  +9 deg ) */,
+		0x1.fe0d3b41815a2p-1 /* cos(  -5 deg ) */,
+		0x1.f697d6938b6c2p-1 /* cos( +11 deg ) */,
+		0x1.ff4c5ed12e61dp-1 /* cos(  -3 deg ) */,
+		0x1.f2e0a214e870fp-1 /* cos( +13 deg ) */,
+		0x1.ffec097f5af8ap-1 /* cos(  -1 deg ) */,
+		0x1.ee8dd4748bf15p-1 /* cos( +15 deg ) */,
+	};
+	static constexpr double const s_vertical_angle_sin[] =
+	{
+		-0x1.0907dc1930690p-2 /* sin( -15 deg ) */,
+		+0x1.1df0b2b89dd1ep-6 /* sin(  +1 deg ) */,
+		-0x1.ccb3236cdc675p-3 /* sin( -13 deg ) */,
+		+0x1.acbc748efc90ep-5 /* sin(  +3 deg ) */,
+		-0x1.86c6ddd76624fp-3 /* sin( -11 deg ) */,
+		+0x1.64fd6b8c28102p-4 /* sin(  +5 deg ) */,
+		-0x1.4060b67a85375p-3 /* sin(  -9 deg ) */,
+		+0x1.f32d44c4f62d3p-4 /* sin(  +7 deg ) */,
+		-0x1.f32d44c4f62d3p-4 /* sin(  -7 deg ) */,
+		+0x1.4060b67a85375p-3 /* sin(  +9 deg ) */,
+		-0x1.64fd6b8c28102p-4 /* sin(  -5 deg ) */,
+		+0x1.86c6ddd76624fp-3 /* sin( +11 deg ) */,
+		-0x1.acbc748efc90ep-5 /* sin(  -3 deg ) */,
+		+0x1.ccb3236cdc675p-3 /* sin( +13 deg ) */,
+		-0x1.1df0b2b89dd1ep-6 /* sin(  -1 deg ) */,
+		+0x1.0907dc1930690p-2 /* sin( +15 deg ) */,
+	};
+	static constexpr double const s_vertical_correction_m[] =
+	{
+		+7.4 / 1'000.0,
+		-0.9 / 1'000.0,
+		+6.5 / 1'000.0,
+		-1.8 / 1'000.0,
+		+5.5 / 1'000.0,
+		-2.7 / 1'000.0,
+		+4.6 / 1'000.0,
+		-3.7 / 1'000.0,
+		+3.7 / 1'000.0,
+		-4.6 / 1'000.0,
+		+2.7 / 1'000.0,
+		-5.5 / 1'000.0,
+		+1.8 / 1'000.0,
+		-6.5 / 1'000.0,
+		+0.9 / 1'000.0,
+		-7.4 / 1'000.0,
+	};
+
+
+	#pragma pack(push, 1)
+	struct channel_data_t
+	{
+		std::uint16_t m_distance;
+		std::uint8_t m_reflectivity;
+	};
+	#pragma pack(pop)
+	static_assert(sizeof(channel_data_t) == 3);
+
+	struct firing_sequence_t
+	{
+		channel_data_t m_channel_data[s_lasers_count];
+	};
+	static_assert(sizeof(firing_sequence_t) == 48);
+
+	struct data_block_t
+	{
+		std::uint16_t m_flag;
+		std::uint16_t m_azimuth;
+		firing_sequence_t m_firing_sequence[s_firing_sequences_per_data_block_count];
+	};
+	static_assert(sizeof(data_block_t) == 100);
+
+	struct factory_t
+	{
+		std::uint8_t m_return_mode;
+		std::uint8_t m_product_id;
+	};
+	static_assert(sizeof(factory_t) == 2);
+
+	#pragma pack(push, 1)
+	struct single_mode_packet_t
+	{
+		data_block_t m_data_blocks[s_data_blocks_per_packet_count];
+		std::uint32_t m_timestamp;
+		factory_t m_factory;
+	};
+	#pragma pack(pop)
+	static_assert(sizeof(single_mode_packet_t) == 1206);
+
+
+	static constexpr auto const deg_to_rad = [](double const& deg) -> double { return deg * (std::numbers::pi_v<double> / 180.0); };
+	static constexpr auto const rad_to_deg = [](double const& rad) -> double { return rad * (180.0 / std::numbers::pi_v<double>); };
+
+
+	CHECK_RET(data_len == sizeof(single_mode_packet_t));
+	single_mode_packet_t const& packet = *reinterpret_cast<single_mode_packet_t const*>(data);
+	CHECK_RET(packet.m_factory.m_product_id == s_vlp16_id);
+	CHECK_RET(packet.m_factory.m_return_mode == s_strongest_mode || packet.m_factory.m_return_mode == s_last_mode);
+	CHECK_RET(packet.m_timestamp <= s_max_timestamp_incl);
+	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_flag == s_flag; }));
+	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_azimuth <= s_max_azimuth_incl; }));
+	for(int data_block_idx = 0; data_block_idx != static_cast<int>(std::size(packet.m_data_blocks)); ++data_block_idx)
+	{
+		data_block_t const& data_block = packet.m_data_blocks[data_block_idx];
+		std::uint16_t const azimuth_gap = [&]() -> std::uint16_t
+		{
+			if(data_block_idx == 0)
+			{
+				return 0;
+			}
+			else
+			{
+				data_block_t const& data_block_prev = packet.m_data_blocks[data_block_idx - 1];
+				bool const wrap = data_block.m_azimuth - data_block_prev.m_azimuth < 0;
+				std::uint16_t const azimuth_gap = !wrap ? data_block.m_azimuth - data_block_prev.m_azimuth : data_block.m_azimuth - data_block_prev.m_azimuth + 360 * 100;
+				return azimuth_gap;
+			}
+		}();
+		for(int firing_sequence_idx = 0; firing_sequence_idx != static_cast<int>(std::size(data_block.m_firing_sequence)); ++firing_sequence_idx)
+		{
+			firing_sequence_t const& firing_sequence = data_block.m_firing_sequence[firing_sequence_idx];
+			for(int channel_data_idx = 0; channel_data_idx != static_cast<int>(std::size(firing_sequence.m_channel_data)); ++channel_data_idx)
+			{
+				channel_data_t const& channel_data = firing_sequence.m_channel_data[channel_data_idx];
+				double const r = static_cast<double>(channel_data.m_distance * 2) / 1'000.0; // distance in meters
+				//double const a = deg_to_rad(static_cast<double>(data_block.m_azimuth) / 100.0); // azimuth in radians
+				double const azimuth_correction = (static_cast<double>(azimuth_gap) / 100.0) / (2.0 * s_firing_sequence_len_us) * (((firing_sequence_idx == 0) ? 0.0 : s_firing_sequence_len_us) + channel_data_idx * s_firing_delay_us); // azimuth correction in degrees
+				double const pa = deg_to_rad(static_cast<double>(data_block.m_azimuth) / 100.0 + azimuth_correction); // precision azimuth in radians
+				double const tmp = r * s_vertical_angle_cos[channel_data_idx];
+				double const x = tmp * std::sin(pa); // x in meters
+				double const y = tmp * std::cos(pa); // y in meters
+				double const z = r * s_vertical_angle_sin[channel_data_idx] + s_vertical_correction_m[channel_data_idx]; // z in meters
+				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_azimuth = static_cast<float>(pa);
+				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_x = static_cast<float>(x);
+				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_y = static_cast<float>(y);
+				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_z = static_cast<float>(z);
+				++g_app_state->m_incomming_points_idx;
+			}
+		}
+	}
+
+	#pragma pop_macro("CHECK_RET")
 }
