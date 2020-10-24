@@ -9,27 +9,35 @@
 #include <iterator> // std::size
 #include <string> // std::u8string, std::u16string
 
-#pragma warning(push)
-#pragma warning(disable:4005) // Macro redefinition.
-#pragma warning(disable:4838) // Narowwing conversion.
 #include <windows.h>
 #include <objbase.h>
 #include <dxgi.h>
-#include <d3dcompiler.h>
+#pragma warning(push)
+#pragma warning(disable:4005) // Macro redefinition.
 #include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\d3dx11core.h"
+#pragma warning(pop)
+#pragma warning(push)
+#pragma warning(disable:4838) // Narowwing conversion.
 #include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\xnamath.h"
 #pragma warning(pop)
+
+
+#ifdef NDEBUG
+	#include "vertex_shader_release.h"
+	#include "pixel_shader_release.h"
+#else
+	#include "vertex_shader_debug.h"
+	#include "pixel_shader_debug.h"
+#endif
 
 
 #ifdef _M_IX86
 	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\dxgi.lib")
 	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\dxguid.lib")
-	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\d3dcompiler.lib")
 #else
 	#ifdef _M_X64
 		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\dxgi.lib")
 		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\dxguid.lib")
-		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\d3dcompiler.lib")
 	#else
 		#error Unknown architecture.
 	#endif
@@ -301,52 +309,8 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_view_port.MaxDepth = 1.0f;
 	d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
 
-	static constexpr char const s_shader[] =
-		R"---(
-cbuffer constant_buffer : register(b0)
-{
-	matrix m_world;
-	matrix m_view;
-	matrix m_projection;
-}
-
-struct vs_output_t
-{
-	float4 m_position : SV_Position;
-	float4 m_color : color0_t;
-};
-
-vs_output_t my_vertex_shader(float4 position : POSITION, float4 color : COLOR)
-{
-	vs_output_t output = (vs_output_t)0;
-	output.m_position = mul(position, m_world);
-	output.m_position = mul(output.m_position, m_view);
-	output.m_position = mul(output.m_position, m_projection);
-	output.m_color = position;
-	return output;
-}
-
-float4 my_pixel_shader(vs_output_t input) : SV_Target
-{
-	return input.m_color;
-}
-		)---";
-	ID3DBlob* d3d11_vertex_shader_blob;
-	ID3DBlob* d3d11_vertex_shader_err_msg;
-	UINT d3d11_vertex_shader_flags = D3DCOMPILE_ENABLE_STRICTNESS;
-	#ifndef NDEBUG
-	d3d11_vertex_shader_flags |= D3DCOMPILE_DEBUG;
-	#endif
-	HRESULT const d3d11_vertex_shader_blob_compiled = D3DCompile(s_shader, std::size(s_shader) * sizeof(char), s_shader, nullptr, nullptr, "my_vertex_shader", "vs_4_0_level_9_1", d3d11_vertex_shader_flags, 0, &d3d11_vertex_shader_blob, &d3d11_vertex_shader_err_msg);
-	if(d3d11_vertex_shader_blob_compiled != S_OK)
-	{
-		std::puts(reinterpret_cast<char const*>(d3d11_vertex_shader_err_msg->GetBufferPointer()));
-	}
-	CHECK_RET(d3d11_vertex_shader_blob_compiled == S_OK, false);
-	auto const d3d11_vertex_shader_blob_free = mk::make_scope_exit([&](){ d3d11_vertex_shader_blob->Release(); });
-
 	ID3D11VertexShader* d3d11_vertex_shader;
-	HRESULT const d3d11_vertex_shader_created = g_app_state->m_d3d11_device->CreateVertexShader(d3d11_vertex_shader_blob->GetBufferPointer(), d3d11_vertex_shader_blob->GetBufferSize(), nullptr, &d3d11_vertex_shader);
+	HRESULT const d3d11_vertex_shader_created = g_app_state->m_d3d11_device->CreateVertexShader(g_vertex_shader_main, std::size(g_vertex_shader_main), nullptr, &d3d11_vertex_shader);
 	CHECK_RET(d3d11_vertex_shader_created == S_OK, false);
 	auto const d3d11_vertex_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_vertex_shader->Release(); });
 	g_app_state->m_d3d11_vertex_shader = d3d11_vertex_shader;
@@ -367,28 +331,14 @@ float4 my_pixel_shader(vs_output_t input) : SV_Target
 	d3d11_shader_imput_layout[1].AlignedByteOffset = 12;
 	d3d11_shader_imput_layout[1].InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
 	d3d11_shader_imput_layout[1].InstanceDataStepRate = 0;
-	HRESULT const d3d11_input_layout_created = g_app_state->m_d3d11_device->CreateInputLayout(d3d11_shader_imput_layout, static_cast<int>(std::size(d3d11_shader_imput_layout)), d3d11_vertex_shader_blob->GetBufferPointer(), d3d11_vertex_shader_blob->GetBufferSize(), &d3d11_input_layout);
+	HRESULT const d3d11_input_layout_created = g_app_state->m_d3d11_device->CreateInputLayout(d3d11_shader_imput_layout, static_cast<int>(std::size(d3d11_shader_imput_layout)), g_vertex_shader_main, std::size(g_vertex_shader_main), &d3d11_input_layout);
 	CHECK_RET(d3d11_input_layout_created == S_OK, false);
 	auto const d3d11_input_layout_free = mk::make_scope_exit([&](){ d3d11_input_layout->Release(); });
 
 	g_app_state->m_d3d11_immediate_context->IASetInputLayout(d3d11_input_layout);
 
-	ID3DBlob* d3d11_pixel_shader_blob;
-	ID3DBlob* d3d11_pixel_shader_err_msg;
-	UINT d3d11_pixel_shader_flags = D3DCOMPILE_ENABLE_STRICTNESS;
-	#ifndef NDEBUG
-	d3d11_pixel_shader_flags |= D3DCOMPILE_DEBUG;
-	#endif
-	HRESULT const d3d11_pixel_shader_blob_compiled = D3DCompile(s_shader, std::size(s_shader) * sizeof(char), s_shader, nullptr, nullptr, "my_pixel_shader", "ps_4_0_level_9_1", d3d11_pixel_shader_flags, 0, &d3d11_pixel_shader_blob, &d3d11_pixel_shader_err_msg);
-	if(d3d11_pixel_shader_blob_compiled != S_OK)
-	{
-		std::puts(reinterpret_cast<char const*>(d3d11_pixel_shader_err_msg->GetBufferPointer()));
-	}
-	CHECK_RET(d3d11_pixel_shader_blob_compiled == S_OK, false);
-	auto const d3d11_pixel_shader_blob_free = mk::make_scope_exit([&](){ d3d11_pixel_shader_blob->Release(); });
-
 	ID3D11PixelShader* d3d11_pixel_shader;
-	HRESULT const d3d11_pixel_shader_created = g_app_state->m_d3d11_device->CreatePixelShader(d3d11_pixel_shader_blob->GetBufferPointer(), d3d11_pixel_shader_blob->GetBufferSize(), nullptr, &d3d11_pixel_shader);
+	HRESULT const d3d11_pixel_shader_created = g_app_state->m_d3d11_device->CreatePixelShader(g_pixel_shader_main, std::size(g_pixel_shader_main), nullptr, &d3d11_pixel_shader);
 	CHECK_RET(d3d11_pixel_shader_created == S_OK, false);
 	auto const d3d11_pixel_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_pixel_shader->Release(); });
 	g_app_state->m_d3d11_pixel_shader = d3d11_pixel_shader;
@@ -727,6 +677,7 @@ bool render()
 	g_app_state->m_d3d11_immediate_context->VSSetShader(g_app_state->m_d3d11_vertex_shader, nullptr, 0);
 	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
 	g_app_state->m_d3d11_immediate_context->PSSetShader(g_app_state->m_d3d11_pixel_shader, nullptr, 0);
+
 	g_app_state->m_d3d11_immediate_context->DrawIndexed(36, 0, 0);
 
 	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);

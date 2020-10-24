@@ -1,10 +1,15 @@
-d3d11/.vs/
-d3d11/d3d11/d3d11.vcxproj.user
+/d3d11/.vs/
+/d3d11/d3d11/d3d11.vcxproj.user
 
-d3d11/Debug/
-d3d11/Release/
-d3d11/x64/
+/d3d11/Debug/
+/d3d11/Release/
+/d3d11/x64/
 
-d3d11/d3d11/Debug/
-d3d11/d3d11/Release/
-d3d11/d3d11/x64/
+/d3d11/d3d11/Debug/
+/d3d11/d3d11/Release/
+/d3d11/d3d11/x64/
+
+/d3d11/d3d11/src/pixel_shader_debug.h
+/d3d11/d3d11/src/pixel_shader_release.h
+/d3d11/d3d11/src/vertex_shader_debug.h
+/d3d11/d3d11/src/vertex_shader_release.h

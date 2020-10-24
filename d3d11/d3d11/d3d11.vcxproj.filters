@@ -15,4 +15,29 @@
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="src\vertex_shader.hlsl">
+      <Filter>src</Filter>
+    </FxCompile>
+    <FxCompile Include="src\pixel_shader.hlsl">
+      <Filter>src</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\build_pixel_shader_debug.bat">
+      <Filter>src</Filter>
+    </None>
+    <None Include="src\build_pixel_shader_release.bat">
+      <Filter>src</Filter>
+    </None>
+    <None Include="src\build_vertex_shader_debug.bat">
+      <Filter>src</Filter>
+    </None>
+    <None Include="src\build_vertex_shader_release.bat">
+      <Filter>src</Filter>
+    </None>
+    <None Include="src\build_all_shaders.bat">
+      <Filter>src</Filter>
+    </None>
+  </ItemGroup>
 </Project>
