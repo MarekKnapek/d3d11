@@ -126,13 +126,18 @@ struct app_state_t
 	IDXGISwapChain* m_d3d11_swap_chain;
 	ID3D11Texture2D* m_d3d11_back_buffer;
 	ID3D11RenderTargetView* m_d3d11_render_target_view;
+	ID3D11Texture2D* m_d3d11_depth_buffer;
+	ID3D11DepthStencilView* m_d3d11_stencil_view;
 	ID3D11VertexShader* m_d3d11_vertex_shader;
 	ID3D11PixelShader* m_d3d11_pixel_shader;
 	ID3D11Buffer* m_d3d11_vertex_buffer;
 	ID3D11Buffer* m_d3d11_index_buffer;
 	ID3D11Buffer* m_d3d11_constant_buffer;
-	float m_rotation;
-	my_constant_buffer_t m_d3d11_transformations;
+	float m_time;
+	XMMATRIX m_world;
+	XMMATRIX m_world_2;
+	XMMATRIX m_view;
+	XMMATRIX m_projection;
 	std::chrono::high_resolution_clock::time_point m_prev_time;
 	std::chrono::high_resolution_clock::time_point m_fps_time;
 	int m_fps_count;
@@ -323,8 +328,37 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	CHECK_RET(d3d11_render_target_view_created == S_OK, false);
 	auto const d3d11_render_target_view_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_render_target_view->Release(); });
 	g_app_state->m_d3d11_render_target_view = d3d11_render_target_view;
-	
-	d3d11_immediate_context->OMSetRenderTargets(1, &d3d11_render_target_view, nullptr);
+
+	ID3D11Texture2D* d3d11_depth_buffer;
+	D3D11_TEXTURE2D_DESC d3d11_depth_buffer_description;
+	d3d11_depth_buffer_description.Width = g_app_state->m_width;
+	d3d11_depth_buffer_description.Height = g_app_state->m_height;
+	d3d11_depth_buffer_description.MipLevels = 1;
+	d3d11_depth_buffer_description.ArraySize = 1;
+	d3d11_depth_buffer_description.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	d3d11_depth_buffer_description.SampleDesc.Count = 1;
+	d3d11_depth_buffer_description.SampleDesc.Quality = 0;
+	d3d11_depth_buffer_description.Usage = D3D11_USAGE_DEFAULT;
+	d3d11_depth_buffer_description.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	d3d11_depth_buffer_description.CPUAccessFlags = 0;
+	d3d11_depth_buffer_description.MiscFlags = 0;
+	HRESULT const d3d11_depth_buffer_created = g_app_state->m_d3d11_device->CreateTexture2D(&d3d11_depth_buffer_description, nullptr, &d3d11_depth_buffer);
+	CHECK_RET(d3d11_depth_buffer_created == S_OK, false);
+	auto const d3d11_depth_buffer_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_depth_buffer->Release(); });
+	g_app_state->m_d3d11_depth_buffer = d3d11_depth_buffer;
+
+	ID3D11DepthStencilView* d3d11_stencil_view;
+	D3D11_DEPTH_STENCIL_VIEW_DESC d3d11_stencil_view_description;
+	d3d11_stencil_view_description.Format = d3d11_depth_buffer_description.Format;
+	d3d11_stencil_view_description.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	d3d11_stencil_view_description.Flags = 0;
+	d3d11_stencil_view_description.Texture2D.MipSlice = 0;
+	HRESULT const d3d11_stencil_view_created = g_app_state->m_d3d11_device->CreateDepthStencilView(g_app_state->m_d3d11_depth_buffer, &d3d11_stencil_view_description, &d3d11_stencil_view);
+	CHECK_RET(d3d11_stencil_view_created == S_OK, false);
+	auto const d3d11_stencil_view_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_stencil_view->Release(); });
+	g_app_state->m_d3d11_stencil_view = d3d11_stencil_view;
+
+	d3d11_immediate_context->OMSetRenderTargets(1, &g_app_state->m_d3d11_render_target_view, g_app_state->m_d3d11_stencil_view);
 
 	D3D11_VIEWPORT d3d11_view_port;
 	d3d11_view_port.TopLeftX = 0.0f;
@@ -450,16 +484,18 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const d3d11_constant_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_constant_buffer->Release(); });
 	g_app_state->m_d3d11_constant_buffer = d3d11_constant_buffer;
 
-	g_app_state->m_rotation = 0.0f;
+	g_app_state->m_time = 0.0f;
 
-	g_app_state->m_d3d11_transformations.m_world = XMMatrixIdentity();
+	g_app_state->m_world = XMMatrixIdentity();
+
+	g_app_state->m_world_2 = XMMatrixIdentity();
 
 	XMVECTOR const d3d11_eye = {0.0f, 1.0f, -5.0f, 0.0f};
 	XMVECTOR const d3d11_at = {0.0f, 1.0f, 0.0f, 0.0f};
 	XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
-	g_app_state->m_d3d11_transformations.m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
+	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
-	g_app_state->m_d3d11_transformations.m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 	/* D3D11 */
 
 	g_app_state->m_thread_end_requested.store(false);
@@ -531,10 +567,11 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 		break;
 		case WM_SIZE:
 		{
-			g_app_state->m_d3d11_back_buffer->Release();
-
 			g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(0, nullptr, nullptr);
+			g_app_state->m_d3d11_stencil_view->Release();
+			g_app_state->m_d3d11_depth_buffer->Release();
 			g_app_state->m_d3d11_render_target_view->Release();
+			g_app_state->m_d3d11_back_buffer->Release();
 
 			bool const window_size_refreshed = refresh_window_size(g_app_state->m_main_window, &g_app_state->m_width, &g_app_state->m_height);
 			CHECK_RET_V(window_size_refreshed);
@@ -551,8 +588,35 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			HRESULT const d3d11_render_target_view_created = g_app_state->m_d3d11_device->CreateRenderTargetView(g_app_state->m_d3d11_back_buffer, nullptr, &d3d11_render_target_view);
 			CHECK_RET(d3d11_render_target_view_created == S_OK, false);
 			g_app_state->m_d3d11_render_target_view = d3d11_render_target_view;
-	
-			g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(1, &d3d11_render_target_view, nullptr);
+
+			ID3D11Texture2D* d3d11_depth_buffer;
+			D3D11_TEXTURE2D_DESC d3d11_depth_buffer_description;
+			d3d11_depth_buffer_description.Width = g_app_state->m_width;
+			d3d11_depth_buffer_description.Height = g_app_state->m_height;
+			d3d11_depth_buffer_description.MipLevels = 1;
+			d3d11_depth_buffer_description.ArraySize = 1;
+			d3d11_depth_buffer_description.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+			d3d11_depth_buffer_description.SampleDesc.Count = 1;
+			d3d11_depth_buffer_description.SampleDesc.Quality = 0;
+			d3d11_depth_buffer_description.Usage = D3D11_USAGE_DEFAULT;
+			d3d11_depth_buffer_description.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			d3d11_depth_buffer_description.CPUAccessFlags = 0;
+			d3d11_depth_buffer_description.MiscFlags = 0;
+			HRESULT const d3d11_depth_buffer_created = g_app_state->m_d3d11_device->CreateTexture2D(&d3d11_depth_buffer_description, nullptr, &d3d11_depth_buffer);
+			CHECK_RET_V(d3d11_depth_buffer_created == S_OK);
+			g_app_state->m_d3d11_depth_buffer = d3d11_depth_buffer;
+
+			ID3D11DepthStencilView* d3d11_stencil_view;
+			D3D11_DEPTH_STENCIL_VIEW_DESC d3d11_stencil_view_description;
+			d3d11_stencil_view_description.Format = d3d11_depth_buffer_description.Format;
+			d3d11_stencil_view_description.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+			d3d11_stencil_view_description.Flags = 0;
+			d3d11_stencil_view_description.Texture2D.MipSlice = 0;
+			HRESULT const d3d11_stencil_view_created = g_app_state->m_d3d11_device->CreateDepthStencilView(g_app_state->m_d3d11_depth_buffer, &d3d11_stencil_view_description, &d3d11_stencil_view);
+			CHECK_RET_V(d3d11_stencil_view_created == S_OK);
+			g_app_state->m_d3d11_stencil_view = d3d11_stencil_view;
+
+			g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(1, &g_app_state->m_d3d11_render_target_view, g_app_state->m_d3d11_stencil_view);
 
 			D3D11_VIEWPORT d3d11_view_port;
 			d3d11_view_port.TopLeftX = 0.0f;
@@ -563,7 +627,7 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			d3d11_view_port.MaxDepth = 1.0f;
 			g_app_state->m_d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
 
-			g_app_state->m_d3d11_transformations.m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+			g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 		}
 		break;
 		case WM_PAINT:
@@ -689,7 +753,7 @@ std::u8string utf16_to_utf8(std::u16string const& u16str)
 
 bool render()
 {
-	static constexpr float const s_rotation_speed = 0.001f;
+	static constexpr float const s_speed = 0.001f;
 	static constexpr float const s_two_pi = 2.0f * std::numbers::pi_v<float>;
 
 	auto const now = std::chrono::high_resolution_clock::now();
@@ -697,25 +761,42 @@ bool render()
 	float const diff_float_ms = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(diff).count();
 	g_app_state->m_prev_time = now;
 
-	g_app_state->m_rotation += diff_float_ms * s_rotation_speed;
-	if(g_app_state->m_rotation >= s_two_pi)
+	g_app_state->m_time += diff_float_ms * s_speed;
+	if(g_app_state->m_time >= s_two_pi)
 	{
-		g_app_state->m_rotation -= s_two_pi;
+		g_app_state->m_time -= s_two_pi;
 	}
-	g_app_state->m_d3d11_transformations.m_world =XMMatrixRotationY(g_app_state->m_rotation);
 
 	static constexpr float const s_background_color[4] = {0.0f, 0.125f, 0.6f, 1.0f};
 	g_app_state->m_d3d11_immediate_context->ClearRenderTargetView(g_app_state->m_d3d11_render_target_view, s_background_color);
 
-	my_constant_buffer_t my_constant_buffer;
-	my_constant_buffer.m_world = XMMatrixTranspose(g_app_state->m_d3d11_transformations.m_world);
-	my_constant_buffer.m_view = XMMatrixTranspose(g_app_state->m_d3d11_transformations.m_view);
-	my_constant_buffer.m_projection = XMMatrixTranspose(g_app_state->m_d3d11_transformations.m_projection);
-	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer, 0, 0);
+	g_app_state->m_d3d11_immediate_context->ClearDepthStencilView(g_app_state->m_d3d11_stencil_view, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+	g_app_state->m_world = XMMatrixRotationY(g_app_state->m_time);
+
+	my_constant_buffer_t my_constant_buffer_1;
+	my_constant_buffer_1.m_world = XMMatrixTranspose(g_app_state->m_world);
+	my_constant_buffer_1.m_view = XMMatrixTranspose(g_app_state->m_view);
+	my_constant_buffer_1.m_projection = XMMatrixTranspose(g_app_state->m_projection);
+	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer_1, 0, 0);
 
 	g_app_state->m_d3d11_immediate_context->VSSetShader(g_app_state->m_d3d11_vertex_shader, nullptr, 0);
 	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
 	g_app_state->m_d3d11_immediate_context->PSSetShader(g_app_state->m_d3d11_pixel_shader, nullptr, 0);
+
+	g_app_state->m_d3d11_immediate_context->DrawIndexed(36, 0, 0);
+
+	XMMATRIX const scale_2 = XMMatrixScaling(0.3f, 0.3f, 0.3f);
+	XMMATRIX const spin_2 = XMMatrixRotationZ(-g_app_state->m_time);
+	XMMATRIX const translate_2 = XMMatrixTranslation(-4.0f, 0.0f, 0.0f);
+	XMMATRIX const orbit_2 = XMMatrixRotationY(-g_app_state->m_time * 2.0f);
+	g_app_state->m_world_2 = scale_2 * spin_2 * translate_2 * orbit_2;
+
+	my_constant_buffer_t my_constant_buffer_2;
+	my_constant_buffer_2.m_world = XMMatrixTranspose(g_app_state->m_world_2);
+	my_constant_buffer_2.m_view = XMMatrixTranspose(g_app_state->m_view);
+	my_constant_buffer_2.m_projection = XMMatrixTranspose(g_app_state->m_projection);
+	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer_2, 0, 0);
 
 	g_app_state->m_d3d11_immediate_context->DrawIndexed(36, 0, 0);
 
