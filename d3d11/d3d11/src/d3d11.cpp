@@ -131,6 +131,7 @@ struct app_state_t
 	ID3D11Buffer* m_d3d11_vertex_buffer;
 	ID3D11Buffer* m_d3d11_index_buffer;
 	ID3D11Buffer* m_d3d11_constant_buffer;
+	float m_rotation;
 	my_constant_buffer_t m_d3d11_transformations;
 	std::chrono::high_resolution_clock::time_point m_prev_time;
 	std::chrono::high_resolution_clock::time_point m_fps_time;
@@ -449,6 +450,8 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const d3d11_constant_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_constant_buffer->Release(); });
 	g_app_state->m_d3d11_constant_buffer = d3d11_constant_buffer;
 
+	g_app_state->m_rotation = 0.0f;
+
 	g_app_state->m_d3d11_transformations.m_world = XMMatrixIdentity();
 
 	XMVECTOR const d3d11_eye = {0.0f, 1.0f, -5.0f, 0.0f};
@@ -687,12 +690,19 @@ std::u8string utf16_to_utf8(std::u16string const& u16str)
 bool render()
 {
 	static constexpr float const s_rotation_speed = 0.001f;
+	static constexpr float const s_two_pi = 2.0f * std::numbers::pi_v<float>;
+
 	auto const now = std::chrono::high_resolution_clock::now();
 	auto const diff = now - g_app_state->m_prev_time;
 	float const diff_float_ms = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(diff).count();
 	g_app_state->m_prev_time = now;
 
-	g_app_state->m_d3d11_transformations.m_world = XMMatrixMultiply(g_app_state->m_d3d11_transformations.m_world, XMMatrixRotationY(diff_float_ms * s_rotation_speed));
+	g_app_state->m_rotation += diff_float_ms * s_rotation_speed;
+	if(g_app_state->m_rotation >= s_two_pi)
+	{
+		g_app_state->m_rotation -= s_two_pi;
+	}
+	g_app_state->m_d3d11_transformations.m_world =XMMatrixRotationY(g_app_state->m_rotation);
 
 	static constexpr float const s_background_color[4] = {0.0f, 0.125f, 0.6f, 1.0f};
 	g_app_state->m_d3d11_immediate_context->ClearRenderTargetView(g_app_state->m_d3d11_render_target_view, s_background_color);
