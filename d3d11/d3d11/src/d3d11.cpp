@@ -291,7 +291,18 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	HRESULT const d3d11_device_created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, d3d11_device_flags, nullptr, 0, D3D11_SDK_VERSION, &d3d11_device, &d3d11_feature_level, &d3d11_immediate_context);
 	CHECK_RET(d3d11_device_created == S_OK, false);
 	auto const d3d11_device_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_device->Release(); });
-	auto const d3d11_immediate_context_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_immediate_context->Release(); });
+	#ifndef NDEBUG
+	auto const d3d11_debug = mk::make_scope_exit([&]()
+	{
+		ID3D11Debug* d3d11_debug;
+		HRESULT const d3d11_debug_casted = d3d11_device->QueryInterface(IID_ID3D11Debug, reinterpret_cast<void**>(&d3d11_debug));
+		CHECK_RET_V(d3d11_debug_casted == S_OK);
+		auto const d3d11_debug_free = mk::make_scope_exit([&](){ d3d11_debug->Release(); });
+		HRESULT const d3d11_debug_live_reported = d3d11_debug->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
+		CHECK_RET_V(d3d11_debug_live_reported == S_OK);
+	});
+	#endif
+	auto const d3d11_immediate_context_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_immediate_context->ClearState(); g_app_state->m_d3d11_immediate_context->Flush(); g_app_state->m_d3d11_immediate_context->Release(); });
 	g_app_state->m_d3d11_device = d3d11_device;
 	g_app_state->m_d3d11_immediate_context = d3d11_immediate_context;
 
