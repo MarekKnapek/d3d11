@@ -15,6 +15,10 @@
 #include <numbers> // std::numbers::pi_v
 #include <string> // std::u8string, std::u16string
 #include <thread>
+#include <vector>
+#include <deque>
+#include <queue>
+#include <condition_variable>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -107,7 +111,6 @@ struct float4_t
 struct my_vertex_t
 {
 	float3_t m_position;
-	float4_t m_color;
 };
 
 
@@ -126,6 +129,27 @@ struct incomming_point_t
 	float m_y;
 	float m_z;
 };
+
+
+#pragma warning(push)
+#pragma warning(disable:4324)
+static constexpr int const s_frames_count = 4;
+struct alignas(256) frame_t
+{
+	my_vertex_t m_vertices[24 * s_points_count];
+	unsigned m_count;
+};
+struct frames_t
+{
+	std::queue<frame_t*> m_empty_frames;
+	std::queue<frame_t*> m_ready_frames;
+	std::condition_variable m_cv;
+	std::mutex m_mtx;
+	std::atomic<bool> m_stop_requested;
+};
+frames_t g_frames;
+void frames_thread_proc();
+#pragma warning(pop)
 
 
 struct app_state_t
@@ -241,6 +265,8 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	app_state_t* const app_state = new app_state_t{};
 	auto const app_state_free = mk::make_scope_exit([&](){ delete g_app_state; });
 	g_app_state = app_state;
+
+	std::fill(std::begin(g_app_state->m_incomming_points), std::begin(g_app_state->m_incomming_points), incomming_point_t{});
 
 	HRESULT const com_initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
 	CHECK_RET(com_initialized == S_OK, false);
@@ -420,7 +446,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_d3d11_vertex_shader = d3d11_vertex_shader;
 
 	ID3D11InputLayout* d3d11_input_layout;
-	D3D11_INPUT_ELEMENT_DESC d3d11_shader_imput_layout[2];
+	D3D11_INPUT_ELEMENT_DESC d3d11_shader_imput_layout[1];
 	d3d11_shader_imput_layout[0].SemanticName = "POSITION";
 	d3d11_shader_imput_layout[0].SemanticIndex = 0;
 	d3d11_shader_imput_layout[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
@@ -428,13 +454,6 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_shader_imput_layout[0].AlignedByteOffset = 0;
 	d3d11_shader_imput_layout[0].InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
 	d3d11_shader_imput_layout[0].InstanceDataStepRate = 0;
-	d3d11_shader_imput_layout[1].SemanticName = "COLOR";
-	d3d11_shader_imput_layout[1].SemanticIndex = 0;
-	d3d11_shader_imput_layout[1].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-	d3d11_shader_imput_layout[1].InputSlot = 0;
-	d3d11_shader_imput_layout[1].AlignedByteOffset = 12;
-	d3d11_shader_imput_layout[1].InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-	d3d11_shader_imput_layout[1].InstanceDataStepRate = 0;
 	HRESULT const d3d11_input_layout_created = g_app_state->m_d3d11_device->CreateInputLayout(d3d11_shader_imput_layout, static_cast<int>(std::size(d3d11_shader_imput_layout)), g_vertex_shader_main, std::size(g_vertex_shader_main), &d3d11_input_layout);
 	CHECK_RET(d3d11_input_layout_created == S_OK, false);
 	auto const d3d11_input_layout_free = mk::make_scope_exit([&](){ d3d11_input_layout->Release(); });
@@ -540,6 +559,14 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_d3d11_immediate_context->VSSetShader(g_app_state->m_d3d11_vertex_shader, nullptr, 0);
 	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
 	g_app_state->m_d3d11_immediate_context->PSSetShader(g_app_state->m_d3d11_pixel_shader, nullptr, 0);
+
+	for(int i = 0; i != s_frames_count; ++i)
+	{
+		g_frames.m_empty_frames.push(new frame_t);
+	}
+	g_frames.m_stop_requested.store(false);
+	std::thread frames_thread{&frames_thread_proc};
+	auto const frames_thread_free = mk::make_scope_exit([&](){ g_frames.m_stop_requested.store(true); g_frames.m_cv.notify_one(); frames_thread.join(); });
 	/* D3D11 */
 
 	g_app_state->m_thread_end_requested.store(false);
@@ -611,67 +638,69 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 		break;
 		case WM_SIZE:
 		{
-			g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(0, nullptr, nullptr);
-			g_app_state->m_d3d11_stencil_view->Release(); g_app_state->m_d3d11_stencil_view = nullptr;
-			g_app_state->m_d3d11_depth_buffer->Release(); g_app_state->m_d3d11_depth_buffer = nullptr;
-			g_app_state->m_d3d11_render_target_view->Release(); g_app_state->m_d3d11_render_target_view = nullptr;
-			g_app_state->m_d3d11_back_buffer->Release(); g_app_state->m_d3d11_back_buffer = nullptr;
-
 			bool const window_size_refreshed = refresh_window_size(g_app_state->m_main_window, &g_app_state->m_width, &g_app_state->m_height);
 			CHECK_RET_V(window_size_refreshed);
+			if(g_app_state->m_width != 0 && g_app_state->m_height != 0)
+			{
+				g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(0, nullptr, nullptr);
+				g_app_state->m_d3d11_stencil_view->Release(); g_app_state->m_d3d11_stencil_view = nullptr;
+				g_app_state->m_d3d11_depth_buffer->Release(); g_app_state->m_d3d11_depth_buffer = nullptr;
+				g_app_state->m_d3d11_render_target_view->Release(); g_app_state->m_d3d11_render_target_view = nullptr;
+				g_app_state->m_d3d11_back_buffer->Release(); g_app_state->m_d3d11_back_buffer = nullptr;
 
-			HRESULT const resized = g_app_state->m_d3d11_swap_chain->ResizeBuffers(1, 0, 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0);
-			CHECK_RET_V(resized == S_OK);
+				HRESULT const resized = g_app_state->m_d3d11_swap_chain->ResizeBuffers(1, 0, 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0);
+				CHECK_RET_V(resized == S_OK);
 
-			ID3D11Texture2D* d3d11_back_buffer;
-			HRESULT const d3d11_got_back_buffer = g_app_state->m_d3d11_swap_chain->GetBuffer(0, IID_ID3D11Texture2D, reinterpret_cast<void**>(&d3d11_back_buffer));
-			CHECK_RET(d3d11_got_back_buffer == S_OK, false);
-			g_app_state->m_d3d11_back_buffer = d3d11_back_buffer;
+				ID3D11Texture2D* d3d11_back_buffer;
+				HRESULT const d3d11_got_back_buffer = g_app_state->m_d3d11_swap_chain->GetBuffer(0, IID_ID3D11Texture2D, reinterpret_cast<void**>(&d3d11_back_buffer));
+				CHECK_RET(d3d11_got_back_buffer == S_OK, false);
+				g_app_state->m_d3d11_back_buffer = d3d11_back_buffer;
 
-			ID3D11RenderTargetView* d3d11_render_target_view;
-			HRESULT const d3d11_render_target_view_created = g_app_state->m_d3d11_device->CreateRenderTargetView(g_app_state->m_d3d11_back_buffer, nullptr, &d3d11_render_target_view);
-			CHECK_RET(d3d11_render_target_view_created == S_OK, false);
-			g_app_state->m_d3d11_render_target_view = d3d11_render_target_view;
+				ID3D11RenderTargetView* d3d11_render_target_view;
+				HRESULT const d3d11_render_target_view_created = g_app_state->m_d3d11_device->CreateRenderTargetView(g_app_state->m_d3d11_back_buffer, nullptr, &d3d11_render_target_view);
+				CHECK_RET(d3d11_render_target_view_created == S_OK, false);
+				g_app_state->m_d3d11_render_target_view = d3d11_render_target_view;
 
-			ID3D11Texture2D* d3d11_depth_buffer;
-			D3D11_TEXTURE2D_DESC d3d11_depth_buffer_description;
-			d3d11_depth_buffer_description.Width = g_app_state->m_width;
-			d3d11_depth_buffer_description.Height = g_app_state->m_height;
-			d3d11_depth_buffer_description.MipLevels = 1;
-			d3d11_depth_buffer_description.ArraySize = 1;
-			d3d11_depth_buffer_description.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-			d3d11_depth_buffer_description.SampleDesc.Count = 1;
-			d3d11_depth_buffer_description.SampleDesc.Quality = 0;
-			d3d11_depth_buffer_description.Usage = D3D11_USAGE_DEFAULT;
-			d3d11_depth_buffer_description.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-			d3d11_depth_buffer_description.CPUAccessFlags = 0;
-			d3d11_depth_buffer_description.MiscFlags = 0;
-			HRESULT const d3d11_depth_buffer_created = g_app_state->m_d3d11_device->CreateTexture2D(&d3d11_depth_buffer_description, nullptr, &d3d11_depth_buffer);
-			CHECK_RET_V(d3d11_depth_buffer_created == S_OK);
-			g_app_state->m_d3d11_depth_buffer = d3d11_depth_buffer;
+				ID3D11Texture2D* d3d11_depth_buffer;
+				D3D11_TEXTURE2D_DESC d3d11_depth_buffer_description;
+				d3d11_depth_buffer_description.Width = g_app_state->m_width;
+				d3d11_depth_buffer_description.Height = g_app_state->m_height;
+				d3d11_depth_buffer_description.MipLevels = 1;
+				d3d11_depth_buffer_description.ArraySize = 1;
+				d3d11_depth_buffer_description.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+				d3d11_depth_buffer_description.SampleDesc.Count = 1;
+				d3d11_depth_buffer_description.SampleDesc.Quality = 0;
+				d3d11_depth_buffer_description.Usage = D3D11_USAGE_DEFAULT;
+				d3d11_depth_buffer_description.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+				d3d11_depth_buffer_description.CPUAccessFlags = 0;
+				d3d11_depth_buffer_description.MiscFlags = 0;
+				HRESULT const d3d11_depth_buffer_created = g_app_state->m_d3d11_device->CreateTexture2D(&d3d11_depth_buffer_description, nullptr, &d3d11_depth_buffer);
+				CHECK_RET_V(d3d11_depth_buffer_created == S_OK);
+				g_app_state->m_d3d11_depth_buffer = d3d11_depth_buffer;
 
-			ID3D11DepthStencilView* d3d11_stencil_view;
-			D3D11_DEPTH_STENCIL_VIEW_DESC d3d11_stencil_view_description;
-			d3d11_stencil_view_description.Format = d3d11_depth_buffer_description.Format;
-			d3d11_stencil_view_description.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-			d3d11_stencil_view_description.Flags = 0;
-			d3d11_stencil_view_description.Texture2D.MipSlice = 0;
-			HRESULT const d3d11_stencil_view_created = g_app_state->m_d3d11_device->CreateDepthStencilView(g_app_state->m_d3d11_depth_buffer, &d3d11_stencil_view_description, &d3d11_stencil_view);
-			CHECK_RET_V(d3d11_stencil_view_created == S_OK);
-			g_app_state->m_d3d11_stencil_view = d3d11_stencil_view;
+				ID3D11DepthStencilView* d3d11_stencil_view;
+				D3D11_DEPTH_STENCIL_VIEW_DESC d3d11_stencil_view_description;
+				d3d11_stencil_view_description.Format = d3d11_depth_buffer_description.Format;
+				d3d11_stencil_view_description.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+				d3d11_stencil_view_description.Flags = 0;
+				d3d11_stencil_view_description.Texture2D.MipSlice = 0;
+				HRESULT const d3d11_stencil_view_created = g_app_state->m_d3d11_device->CreateDepthStencilView(g_app_state->m_d3d11_depth_buffer, &d3d11_stencil_view_description, &d3d11_stencil_view);
+				CHECK_RET_V(d3d11_stencil_view_created == S_OK);
+				g_app_state->m_d3d11_stencil_view = d3d11_stencil_view;
 
-			g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(1, &g_app_state->m_d3d11_render_target_view, g_app_state->m_d3d11_stencil_view);
+				g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(1, &g_app_state->m_d3d11_render_target_view, g_app_state->m_d3d11_stencil_view);
 
-			D3D11_VIEWPORT d3d11_view_port;
-			d3d11_view_port.TopLeftX = 0.0f;
-			d3d11_view_port.TopLeftY = 0.0f;
-			d3d11_view_port.Width = static_cast<float>(g_app_state->m_width);
-			d3d11_view_port.Height = static_cast<float>(g_app_state->m_height);
-			d3d11_view_port.MinDepth = 0.0f;
-			d3d11_view_port.MaxDepth = 1.0f;
-			g_app_state->m_d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
+				D3D11_VIEWPORT d3d11_view_port;
+				d3d11_view_port.TopLeftX = 0.0f;
+				d3d11_view_port.TopLeftY = 0.0f;
+				d3d11_view_port.Width = static_cast<float>(g_app_state->m_width);
+				d3d11_view_port.Height = static_cast<float>(g_app_state->m_height);
+				d3d11_view_port.MinDepth = 0.0f;
+				d3d11_view_port.MaxDepth = 1.0f;
+				g_app_state->m_d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
 
-			g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+				g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+			}
 		}
 		break;
 		case WM_PAINT:
@@ -816,18 +845,54 @@ bool render()
 
 	g_app_state->m_d3d11_immediate_context->ClearDepthStencilView(g_app_state->m_d3d11_stencil_view, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
+	do
+	{
+		frame_t* frame;
+		{
+			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
+			if(g_frames.m_ready_frames.empty())
+			{
+				break;
+			}
+			frame = g_frames.m_ready_frames.front();
+			g_frames.m_ready_frames.pop();
+		}
+		if(frame->m_count != 0)
+		{
+			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
+			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
+			CHECK_RET_V(mapped == S_OK);
+			std::memcpy(d3d11_mapped_sub_resource.pData, frame->m_vertices, sizeof(my_vertex_t) * 24 * frame->m_count);
+			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0);
+			g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * frame->m_count, 0, 0);
+		}
+		else
+		{
+			volatile int a;
+			a = 0;
+		}
+		{
+			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
+			g_frames.m_empty_frames.push(frame);
+		}
+		g_frames.m_cv.notify_one();
+	}while(false);
+
+	#if 0
 	// VLP
 	do{
-		std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
-		if(g_app_state->m_incomming_points_idx == 0) break;
+		static constexpr auto const s_prev_idx = [](unsigned const& idx) -> unsigned
+		{
+			return (idx - 1) & (static_cast<unsigned>(s_points_count) - 1);
+		};
 		static constexpr auto const s_find_idx_1 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx) -> unsigned
 		{
 			unsigned idx_1 = start_idx;
 			for(;;)
 			{
-				if(idx_1 == 0) return idx_1;
-				if(points[idx_1 - 1].m_azimuth > points[idx_1].m_azimuth) return idx_1 - 1;
-				--idx_1;
+				unsigned const prev = s_prev_idx(idx_1);
+				if(points[prev].m_azimuth > points[idx_1].m_azimuth) return prev;
+				idx_1 = prev;
 			}
 		};
 		static constexpr auto const s_find_idx_2 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx, unsigned const& idx_1) -> unsigned
@@ -836,22 +901,26 @@ bool render()
 			incomming_point_t const& start_point = points[start_idx];
 			for(;;)
 			{
-				if(idx_2 == 0) return idx_2;
+				unsigned const prev = s_prev_idx(idx_2);
 				if(points[idx_2].m_azimuth <= start_point.m_azimuth) return idx_2;
-				--idx_2;
+				idx_2 = prev;
 			}
 		};
-		unsigned const idx_1 = s_find_idx_1(g_app_state->m_incomming_points, g_app_state->m_incomming_points_idx - 1);
-		unsigned const idx_2 = s_find_idx_2(g_app_state->m_incomming_points, g_app_state->m_incomming_points_idx - 1, idx_1);
-		unsigned const count = g_app_state->m_incomming_points_idx - idx_2;
+
+		std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
+		unsigned const idx = s_prev_idx(g_app_state->m_incomming_points_idx);
+		if(g_app_state->m_incomming_points[idx].m_azimuth == 0.0f) break;
+		unsigned const idx_1 = s_find_idx_1(g_app_state->m_incomming_points, idx);
+		unsigned const idx_2 = s_find_idx_2(g_app_state->m_incomming_points, idx, idx_1);
+		unsigned const count = (g_app_state->m_incomming_points_idx - idx_2) & (static_cast<unsigned>(s_points_count) - 1);
 		{
 			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
 			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
 			CHECK_RET_V(mapped == S_OK);
-			auto const unmap = mk::make_scope_exit([&](){ g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0); });
 			for(unsigned i = 0; i != count; ++i)
 			{
-				my_vertex_t const center{float3_t{g_app_state->m_incomming_points[idx_2 + i].m_x, g_app_state->m_incomming_points[idx_2 + i].m_y, g_app_state->m_incomming_points[idx_2 + i].m_z}, float4_t{1.0f, 1.0f, 1.0f, 1.0f}};
+				incomming_point_t const& ip = g_app_state->m_incomming_points[(idx_2 + i) & (static_cast<unsigned>(s_points_count) - 1)];
+				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
 				for(int j = 0; j != 24; ++j)
 				{
 					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
@@ -864,14 +933,16 @@ bool render()
 					p.m_position.m_z += zz[j] * 0.005f;
 				}
 			}
+			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0);
 		}
 		// render
 		g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * count, 0, 0);
 		// render
 	}while(false);
 	// VLP
+	#endif
 
-	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);
+	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(0, 0);
 	CHECK_RET(presented == S_OK || presented == DXGI_STATUS_OCCLUDED, false);
 
 	++g_app_state->m_fps_count;
@@ -1116,4 +1187,88 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	}
 
 	#pragma pop_macro("CHECK_RET")
+}
+
+void frames_thread_proc()
+{
+	for(;;)
+	{
+		frame_t* frame;
+		{
+			std::unique_lock<std::mutex> lck{g_frames.m_mtx};
+			for(;;)
+			{
+				if(!g_frames.m_empty_frames.empty())
+				{
+					frame = g_frames.m_empty_frames.front();
+					g_frames.m_empty_frames.pop();
+					break;
+				}
+				else
+				{
+					g_frames.m_cv.wait(lck);
+					if(g_frames.m_stop_requested.load() == true)
+					{
+						return;
+					}
+				}
+			}
+		}
+		do
+		{
+			static constexpr auto const s_prev_idx = [](unsigned const& idx) -> unsigned
+			{
+				return (idx - 1) & (static_cast<unsigned>(s_points_count) - 1);
+			};
+			static constexpr auto const s_find_idx_1 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx) -> unsigned
+			{
+				unsigned idx_1 = start_idx;
+				for(;;)
+				{
+					unsigned const prev = s_prev_idx(idx_1);
+					if(points[prev].m_azimuth > points[idx_1].m_azimuth) return prev;
+					idx_1 = prev;
+				}
+			};
+			static constexpr auto const s_find_idx_2 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx, unsigned const& idx_1) -> unsigned
+			{
+				unsigned idx_2 = idx_1;
+				incomming_point_t const& start_point = points[start_idx];
+				for(;;)
+				{
+					unsigned const prev = s_prev_idx(idx_2);
+					if(points[idx_2].m_azimuth <= start_point.m_azimuth) return idx_2;
+					idx_2 = prev;
+				}
+			};
+			std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
+			frame->m_count = 0;
+			unsigned const idx = s_prev_idx(g_app_state->m_incomming_points_idx);
+			if(g_app_state->m_incomming_points[idx].m_azimuth == 0.0f) break;
+			unsigned const idx_1 = s_find_idx_1(g_app_state->m_incomming_points, idx);
+			unsigned const idx_2 = s_find_idx_2(g_app_state->m_incomming_points, idx, idx_1);
+			unsigned const count = (g_app_state->m_incomming_points_idx - idx_2) & (static_cast<unsigned>(s_points_count) - 1);
+			frame->m_count = count;
+			for(unsigned i = 0; i != count; ++i)
+			{
+				incomming_point_t const& ip = g_app_state->m_incomming_points[(idx_2 + i) & (static_cast<unsigned>(s_points_count) - 1)];
+				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
+				for(int j = 0; j != 24; ++j)
+				{
+					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
+					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
+					my_vertex_t& p = frame->m_vertices[24 * i + j];
+					p = center;
+					p.m_position.m_x += xx[j] * 0.005f;
+					p.m_position.m_y += yy[j] * 0.005f;
+					p.m_position.m_z += zz[j] * 0.005f;
+				}
+			}
+		}while(false);
+		{
+			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
+			g_frames.m_ready_frames.push(frame);
+		}
+	}
 }
