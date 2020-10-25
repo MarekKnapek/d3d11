@@ -15,10 +15,13 @@ struct my_pixel_format_t
 
 my_pixel_format_t vertex_shader_main(float4 position : POSITION, float4 color : COLOR)
 {
-	my_pixel_format_t output = (my_pixel_format_t)0;
-	output.m_position = mul(position, m_world);
-	output.m_position = mul(output.m_position, m_view);
-	output.m_position = mul(output.m_position, m_projection);
+	float4 pos = position;
+	pos = mul(pos, m_world);
+	pos = mul(pos, m_view);
+	pos = mul(pos, m_projection);
+
+	my_pixel_format_t output;
+	output.m_position = pos;
 	output.m_color = color;
 	return output;
 }
