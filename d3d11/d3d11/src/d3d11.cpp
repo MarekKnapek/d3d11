@@ -134,9 +134,11 @@ struct incomming_point_t
 #pragma warning(push)
 #pragma warning(disable:4324)
 static constexpr int const s_frames_count = 4;
+static constexpr int const s_vertices_per_cube = 8;
+static constexpr int const s_indices_per_cube = 2 * 3 * 6;
 struct alignas(256) frame_t
 {
-	my_vertex_t m_vertices[24 * s_points_count];
+	my_vertex_t m_vertices[s_vertices_per_cube * s_points_count];
 	unsigned m_count;
 };
 struct frames_t
@@ -468,7 +470,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	ID3D11Buffer* d3d11_vlp_vertex_buffer;
 	D3D11_BUFFER_DESC d3d11_vlp_vertex_buffer_description;
-	d3d11_vlp_vertex_buffer_description.ByteWidth = 24 * s_points_count * sizeof(my_vertex_t);
+	d3d11_vlp_vertex_buffer_description.ByteWidth = s_vertices_per_cube * s_points_count * sizeof(my_vertex_t);
 	d3d11_vlp_vertex_buffer_description.Usage = D3D11_USAGE_DYNAMIC;
 	d3d11_vlp_vertex_buffer_description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	d3d11_vlp_vertex_buffer_description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -488,26 +490,43 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	static_assert(std::size(d3d11_vertex_buffer_offsets) == std::size(d3d11_vertex_buffers));
 	g_app_state->m_d3d11_immediate_context->IASetVertexBuffers(start_slot, num_buffers, d3d11_vertex_buffers, d3d11_vertex_buffer_strides, d3d11_vertex_buffer_offsets);
 
+	static constexpr int const s_index_pattern[] =
+	{
+		// front
+		0, 1, 3,
+		3, 1, 2,
+		// back
+		4, 5, 7,
+		7, 5, 6,
+		// left
+		3, 2, 4,
+		4, 2, 5,
+		// right
+		7, 6, 0,
+		0, 6, 1,
+		// top
+		7, 0, 4,
+		4, 0, 3,
+		// bottom
+		1, 6, 2,
+		2, 6, 5,
+	};
+
 	ID3D11Buffer* d3d11_vlp_index_buffer;
 	D3D11_BUFFER_DESC d3d11_vlp_index_buffer_description;
-	d3d11_vlp_index_buffer_description.ByteWidth = 3 * 2 * 6 * s_points_count * sizeof(std::uint32_t);
+	d3d11_vlp_index_buffer_description.ByteWidth = s_indices_per_cube * s_points_count * sizeof(std::uint32_t);
 	d3d11_vlp_index_buffer_description.Usage = D3D11_USAGE_IMMUTABLE;
 	d3d11_vlp_index_buffer_description.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	d3d11_vlp_index_buffer_description.CPUAccessFlags = 0;
 	d3d11_vlp_index_buffer_description.MiscFlags = 0;
 	d3d11_vlp_index_buffer_description.StructureByteStride = 0;
 	D3D11_SUBRESOURCE_DATA d3d11_vlp_index_buffer_resource_data;
-	std::uint32_t* vlp_index_buffer_src_data = new std::uint32_t[3 * 2 * 6 * s_points_count];
+	std::uint32_t* vlp_index_buffer_src_data = new std::uint32_t[s_indices_per_cube * s_points_count];
 	for(int idx_point = 0; idx_point != s_points_count; ++idx_point)
 	{
-		for(int idx_face = 0; idx_face != 6; ++idx_face)
+		for(int idx_indice = 0; idx_indice != s_indices_per_cube; ++idx_indice)
 		{
-			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 0] = idx_point * 24 + idx_face * 4 + 0;
-			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 1] = idx_point * 24 + idx_face * 4 + 1;
-			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 2] = idx_point * 24 + idx_face * 4 + 2;
-			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 3] = idx_point * 24 + idx_face * 4 + 0;
-			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 4] = idx_point * 24 + idx_face * 4 + 2;
-			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 5] = idx_point * 24 + idx_face * 4 + 3;
+			vlp_index_buffer_src_data[idx_point * s_indices_per_cube + idx_indice] = idx_point * s_vertices_per_cube + s_index_pattern[idx_indice];
 		}
 	}
 	d3d11_vlp_index_buffer_resource_data.pSysMem = vlp_index_buffer_src_data;
@@ -862,7 +881,7 @@ bool render()
 			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
 			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
 			CHECK_RET_V(mapped == S_OK);
-			std::memcpy(d3d11_mapped_sub_resource.pData, frame->m_vertices, sizeof(my_vertex_t) * 24 * frame->m_count);
+			std::memcpy(d3d11_mapped_sub_resource.pData, frame->m_vertices, sizeof(my_vertex_t) * s_vertices_per_cube * frame->m_count);
 			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0);
 			g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * frame->m_count, 0, 0);
 		}
@@ -921,12 +940,12 @@ bool render()
 			{
 				incomming_point_t const& ip = g_app_state->m_incomming_points[(idx_2 + i) & (static_cast<unsigned>(s_points_count) - 1)];
 				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
-				for(int j = 0; j != 24; ++j)
+				for(int j = 0; j != s_vertices_per_cube; ++j)
 				{
 					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
 					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
 					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
-					my_vertex_t& p = reinterpret_cast<my_vertex_t*>(d3d11_mapped_sub_resource.pData)[24*i+j];
+					my_vertex_t& p = reinterpret_cast<my_vertex_t*>(d3d11_mapped_sub_resource.pData)[s_vertices_per_cube*i+j];
 					p = center;
 					p.m_position.m_x += xx[j] * 0.005f;
 					p.m_position.m_y += yy[j] * 0.005f;
@@ -942,7 +961,7 @@ bool render()
 	// VLP
 	#endif
 
-	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(0, 0);
+	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);
 	CHECK_RET(presented == S_OK || presented == DXGI_STATUS_OCCLUDED, false);
 
 	++g_app_state->m_fps_count;
@@ -1253,12 +1272,12 @@ void frames_thread_proc()
 			{
 				incomming_point_t const& ip = g_app_state->m_incomming_points[(idx_2 + i) & (static_cast<unsigned>(s_points_count) - 1)];
 				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
-				for(int j = 0; j != 24; ++j)
+				for(int j = 0; j != s_vertices_per_cube; ++j)
 				{
-					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
-					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
-					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
-					my_vertex_t& p = frame->m_vertices[24 * i + j];
+					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
+					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
+					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+					my_vertex_t& p = frame->m_vertices[s_vertices_per_cube * i + j];
 					p = center;
 					p.m_position.m_x += xx[j] * 0.005f;
 					p.m_position.m_y += yy[j] * 0.005f;
