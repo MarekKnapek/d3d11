@@ -11,6 +11,7 @@
 #include <cstring> // std::memcpy
 #include <cwchar> // std::wcslen
 #include <iterator> // std::size, std::cbegin, std::cend, std::begin, std::end
+#include <mutex>
 #include <numbers> // std::numbers::pi_v
 #include <string> // std::u8string, std::u16string
 #include <thread>
@@ -142,6 +143,7 @@ struct app_state_t
 	std::chrono::high_resolution_clock::time_point m_fps_time;
 	int m_fps_count;
 	std::atomic<bool> m_thread_end_requested;
+	std::mutex m_points_mutex;
 	incomming_point_t m_incomming_points[64 * 1024];
 	unsigned m_incomming_points_idx;
 };
@@ -939,9 +941,9 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	static constexpr std::uint8_t const s_vlp16_id = 0x22;
 	static constexpr std::uint8_t const s_strongest_mode = 0x37;
 	static constexpr std::uint8_t const s_last_mode = 0x38;
-	static constexpr std::uint32_t const s_max_timestamp_incl = 3'599'999'999ull;
+	static constexpr std::uint32_t const s_max_timestamp = 3'600'000'000ull;
 	static constexpr std::uint16_t const s_flag = 0xEEFF;
-	static constexpr std::uint16_t const s_max_azimuth_incl = 35'999;
+	static constexpr std::uint16_t const s_max_azimuth = 36'000;
 
 	static constexpr double const s_firing_sequence_len_us = 55.296; // us, including recharge time
 	static constexpr double const s_firing_delay_us = 2.304; // us
@@ -1051,13 +1053,16 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	static constexpr auto const rad_to_deg = [](double const& rad) -> double { return rad * (180.0 / std::numbers::pi_v<double>); };
 
 
+	std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
+
+
 	CHECK_RET(data_len == sizeof(single_mode_packet_t));
 	single_mode_packet_t const& packet = *reinterpret_cast<single_mode_packet_t const*>(data);
 	CHECK_RET(packet.m_factory.m_product_id == s_vlp16_id);
 	CHECK_RET(packet.m_factory.m_return_mode == s_strongest_mode || packet.m_factory.m_return_mode == s_last_mode);
-	CHECK_RET(packet.m_timestamp <= s_max_timestamp_incl);
+	CHECK_RET(packet.m_timestamp < s_max_timestamp);
 	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_flag == s_flag; }));
-	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_azimuth <= s_max_azimuth_incl; }));
+	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_azimuth < s_max_azimuth; }));
 	for(int data_block_idx = 0; data_block_idx != static_cast<int>(std::size(packet.m_data_blocks)); ++data_block_idx)
 	{
 		data_block_t const& data_block = packet.m_data_blocks[data_block_idx];
