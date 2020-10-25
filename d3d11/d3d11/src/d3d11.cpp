@@ -290,7 +290,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	#endif
 	HRESULT const d3d11_device_created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, d3d11_device_flags, nullptr, 0, D3D11_SDK_VERSION, &d3d11_device, &d3d11_feature_level, &d3d11_immediate_context);
 	CHECK_RET(d3d11_device_created == S_OK, false);
-	auto const d3d11_device_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_device->Release(); });
+	auto const d3d11_device_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_device->Release(); g_app_state->m_d3d11_device = nullptr; });
 	#ifndef NDEBUG
 	auto const d3d11_debug = mk::make_scope_exit([&]()
 	{
@@ -302,7 +302,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 		CHECK_RET_V(d3d11_debug_live_reported == S_OK);
 	});
 	#endif
-	auto const d3d11_immediate_context_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_immediate_context->ClearState(); g_app_state->m_d3d11_immediate_context->Flush(); g_app_state->m_d3d11_immediate_context->Release(); });
+	auto const d3d11_immediate_context_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_immediate_context->ClearState(); g_app_state->m_d3d11_immediate_context->Flush(); g_app_state->m_d3d11_immediate_context->Release(); g_app_state->m_d3d11_immediate_context = nullptr; });
 	g_app_state->m_d3d11_device = d3d11_device;
 	g_app_state->m_d3d11_immediate_context = d3d11_immediate_context;
 
@@ -325,19 +325,19 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_swap_chain_description.Flags = 0;
 	HRESULT const d3d11_swap_chain_created = d3d11_factory->CreateSwapChain(d3d11_device, &d3d11_swap_chain_description, &d3d11_swap_chain);
 	CHECK_RET(d3d11_swap_chain_created == S_OK, false);
-	auto const d3d11_swap_chain_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_swap_chain->Release(); });
+	auto const d3d11_swap_chain_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_swap_chain->Release(); g_app_state->m_d3d11_swap_chain = nullptr; });
 	g_app_state->m_d3d11_swap_chain = d3d11_swap_chain;
 
 	ID3D11Texture2D* d3d11_back_buffer;
 	HRESULT const d3d11_got_back_buffer = d3d11_swap_chain->GetBuffer(0, IID_ID3D11Texture2D, reinterpret_cast<void**>(&d3d11_back_buffer));
 	CHECK_RET(d3d11_got_back_buffer == S_OK, false);
-	auto const back_buffer_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_back_buffer->Release(); });
+	auto const back_buffer_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_back_buffer->Release(); g_app_state->m_d3d11_back_buffer = nullptr; });
 	g_app_state->m_d3d11_back_buffer = d3d11_back_buffer;
 
 	ID3D11RenderTargetView* d3d11_render_target_view;
 	HRESULT const d3d11_render_target_view_created = d3d11_device->CreateRenderTargetView(d3d11_back_buffer, nullptr, &d3d11_render_target_view);
 	CHECK_RET(d3d11_render_target_view_created == S_OK, false);
-	auto const d3d11_render_target_view_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_render_target_view->Release(); });
+	auto const d3d11_render_target_view_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_render_target_view->Release(); g_app_state->m_d3d11_render_target_view = nullptr; });
 	g_app_state->m_d3d11_render_target_view = d3d11_render_target_view;
 
 	ID3D11Texture2D* d3d11_depth_buffer;
@@ -355,7 +355,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_depth_buffer_description.MiscFlags = 0;
 	HRESULT const d3d11_depth_buffer_created = g_app_state->m_d3d11_device->CreateTexture2D(&d3d11_depth_buffer_description, nullptr, &d3d11_depth_buffer);
 	CHECK_RET(d3d11_depth_buffer_created == S_OK, false);
-	auto const d3d11_depth_buffer_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_depth_buffer->Release(); });
+	auto const d3d11_depth_buffer_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_depth_buffer->Release(); g_app_state->m_d3d11_depth_buffer = nullptr; });
 	g_app_state->m_d3d11_depth_buffer = d3d11_depth_buffer;
 
 	ID3D11DepthStencilView* d3d11_stencil_view;
@@ -366,7 +366,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_stencil_view_description.Texture2D.MipSlice = 0;
 	HRESULT const d3d11_stencil_view_created = g_app_state->m_d3d11_device->CreateDepthStencilView(g_app_state->m_d3d11_depth_buffer, &d3d11_stencil_view_description, &d3d11_stencil_view);
 	CHECK_RET(d3d11_stencil_view_created == S_OK, false);
-	auto const d3d11_stencil_view_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_stencil_view->Release(); });
+	auto const d3d11_stencil_view_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_stencil_view->Release(); g_app_state->m_d3d11_stencil_view = nullptr; });
 	g_app_state->m_d3d11_stencil_view = d3d11_stencil_view;
 
 	d3d11_immediate_context->OMSetRenderTargets(1, &g_app_state->m_d3d11_render_target_view, g_app_state->m_d3d11_stencil_view);
@@ -401,7 +401,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	ID3D11VertexShader* d3d11_vertex_shader;
 	HRESULT const d3d11_vertex_shader_created = g_app_state->m_d3d11_device->CreateVertexShader(g_vertex_shader_main, std::size(g_vertex_shader_main), nullptr, &d3d11_vertex_shader);
 	CHECK_RET(d3d11_vertex_shader_created == S_OK, false);
-	auto const d3d11_vertex_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_vertex_shader->Release(); });
+	auto const d3d11_vertex_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_vertex_shader->Release(); g_app_state->m_d3d11_vertex_shader = nullptr; });
 	g_app_state->m_d3d11_vertex_shader = d3d11_vertex_shader;
 
 	ID3D11InputLayout* d3d11_input_layout;
@@ -429,7 +429,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	ID3D11PixelShader* d3d11_pixel_shader;
 	HRESULT const d3d11_pixel_shader_created = g_app_state->m_d3d11_device->CreatePixelShader(g_pixel_shader_main, std::size(g_pixel_shader_main), nullptr, &d3d11_pixel_shader);
 	CHECK_RET(d3d11_pixel_shader_created == S_OK, false);
-	auto const d3d11_pixel_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_pixel_shader->Release(); });
+	auto const d3d11_pixel_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_pixel_shader->Release(); g_app_state->m_d3d11_pixel_shader = nullptr; });
 	g_app_state->m_d3d11_pixel_shader = d3d11_pixel_shader;
 
 	static constexpr my_vertex_t const s_cube_vertex_buffer[] =
@@ -479,7 +479,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_vertex_buffer_resource_data.SysMemSlicePitch = 0;
 	HRESULT const d3d11_vertex_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vertex_buffer_description, &d3d11_vertex_buffer_resource_data, &d3d11_vertex_buffer);
 	CHECK_RET(d3d11_vertex_buffer_created == S_OK, false);
-	auto const d3d11_vertex_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vertex_buffer->Release(); });
+	auto const d3d11_vertex_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vertex_buffer->Release(); g_app_state->m_d3d11_vertex_buffer = nullptr; });
 	g_app_state->m_d3d11_vertex_buffer = d3d11_vertex_buffer;
 
 	UINT const d3d11_vertex_buffer_stride = sizeof(my_vertex_t);
@@ -521,7 +521,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_index_buffer_resource_data.SysMemSlicePitch = 0;
 	HRESULT const d3d11_index_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_index_buffer_description, &d3d11_index_buffer_resource_data, &d3d11_index_buffer);
 	CHECK_RET(d3d11_index_buffer_created == S_OK, false);
-	auto const d3d11_index_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_index_buffer->Release(); });
+	auto const d3d11_index_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_index_buffer->Release(); g_app_state->m_d3d11_index_buffer = nullptr; });
 	g_app_state->m_d3d11_index_buffer = d3d11_index_buffer;
 
 	g_app_state->m_d3d11_immediate_context->IASetIndexBuffer(g_app_state->m_d3d11_index_buffer, DXGI_FORMAT_R16_UINT, 0);
@@ -538,7 +538,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_constant_buffer_description.StructureByteStride = 0;
 	HRESULT const d3d11_constant_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_constant_buffer_description, nullptr, &d3d11_constant_buffer);
 	CHECK_RET(d3d11_constant_buffer_created == S_OK, false);
-	auto const d3d11_constant_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_constant_buffer->Release(); });
+	auto const d3d11_constant_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_constant_buffer->Release(); g_app_state->m_d3d11_constant_buffer = nullptr; });
 	g_app_state->m_d3d11_constant_buffer = d3d11_constant_buffer;
 
 	g_app_state->m_time = 0.0f;
@@ -625,10 +625,10 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 		case WM_SIZE:
 		{
 			g_app_state->m_d3d11_immediate_context->OMSetRenderTargets(0, nullptr, nullptr);
-			g_app_state->m_d3d11_stencil_view->Release();
-			g_app_state->m_d3d11_depth_buffer->Release();
-			g_app_state->m_d3d11_render_target_view->Release();
-			g_app_state->m_d3d11_back_buffer->Release();
+			g_app_state->m_d3d11_stencil_view->Release(); g_app_state->m_d3d11_stencil_view = nullptr;
+			g_app_state->m_d3d11_depth_buffer->Release(); g_app_state->m_d3d11_depth_buffer = nullptr;
+			g_app_state->m_d3d11_render_target_view->Release(); g_app_state->m_d3d11_render_target_view = nullptr;
+			g_app_state->m_d3d11_back_buffer->Release(); g_app_state->m_d3d11_back_buffer = nullptr;
 
 			bool const window_size_refreshed = refresh_window_size(g_app_state->m_main_window, &g_app_state->m_width, &g_app_state->m_height);
 			CHECK_RET_V(window_size_refreshed);
