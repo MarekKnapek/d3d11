@@ -360,6 +360,24 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	d3d11_immediate_context->OMSetRenderTargets(1, &g_app_state->m_d3d11_render_target_view, g_app_state->m_d3d11_stencil_view);
 
+	ID3D11RasterizerState* d3d11_rasterizer;
+	D3D11_RASTERIZER_DESC d3d11_rasterizer_description;
+	d3d11_rasterizer_description.FillMode = D3D11_FILL_SOLID;
+	d3d11_rasterizer_description.CullMode = D3D11_CULL_BACK;
+	d3d11_rasterizer_description.FrontCounterClockwise = FALSE;
+	d3d11_rasterizer_description.DepthBias = 0;
+	d3d11_rasterizer_description.DepthBiasClamp = 0.0f;
+	d3d11_rasterizer_description.SlopeScaledDepthBias = 0.0f;
+	d3d11_rasterizer_description.DepthClipEnable = TRUE;
+	d3d11_rasterizer_description.ScissorEnable = FALSE;
+	d3d11_rasterizer_description.MultisampleEnable = FALSE;
+	d3d11_rasterizer_description.AntialiasedLineEnable = FALSE;
+	HRESULT const d3d11_rasterizer_created = g_app_state->m_d3d11_device->CreateRasterizerState(&d3d11_rasterizer_description, &d3d11_rasterizer);
+	CHECK_RET(d3d11_rasterizer_created == S_OK, false);
+	auto const d3d11_rasterizer_free = mk::make_scope_exit([&](){ d3d11_rasterizer->Release(); });
+
+	g_app_state->m_d3d11_immediate_context->RSSetState(d3d11_rasterizer);
+
 	D3D11_VIEWPORT d3d11_view_port;
 	d3d11_view_port.TopLeftX = 0.0f;
 	d3d11_view_port.TopLeftY = 0.0f;
@@ -367,7 +385,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_view_port.Height = static_cast<float>(g_app_state->m_height);
 	d3d11_view_port.MinDepth = 0.0f;
 	d3d11_view_port.MaxDepth = 1.0f;
-	d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
+	g_app_state->m_d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
 
 	ID3D11VertexShader* d3d11_vertex_shader;
 	HRESULT const d3d11_vertex_shader_created = g_app_state->m_d3d11_device->CreateVertexShader(g_vertex_shader_main, std::size(g_vertex_shader_main), nullptr, &d3d11_vertex_shader);
