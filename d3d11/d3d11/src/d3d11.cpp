@@ -77,6 +77,18 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
+constexpr bool is_power_of_two(unsigned const& n) noexcept
+{
+	return n == 0 || (n & (n - 1)) == 0;
+};
+
+
+static constexpr unsigned const s_points_count = 512 * 1024;
+
+
+static_assert(is_power_of_two(s_points_count));
+
+
 struct float3_t
 {
 	float m_x;
@@ -131,8 +143,6 @@ struct app_state_t
 	ID3D11DepthStencilView* m_d3d11_stencil_view;
 	ID3D11VertexShader* m_d3d11_vertex_shader;
 	ID3D11PixelShader* m_d3d11_pixel_shader;
-	ID3D11Buffer* m_d3d11_vertex_buffer;
-	ID3D11Buffer* m_d3d11_index_buffer;
 	ID3D11Buffer* m_d3d11_constant_buffer;
 	float m_time;
 	XMMATRIX m_world;
@@ -142,10 +152,13 @@ struct app_state_t
 	std::chrono::high_resolution_clock::time_point m_prev_time;
 	std::chrono::high_resolution_clock::time_point m_fps_time;
 	int m_fps_count;
+	ID3D11Buffer* m_d3d11_vlp_vertex_buffer;
+	ID3D11Buffer* m_d3d11_vlp_index_buffer;
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
-	incomming_point_t m_incomming_points[64 * 1024];
 	unsigned m_incomming_points_idx;
+	unsigned m_incomming_points_idx_2;
+	incomming_point_t m_incomming_points[s_points_count];
 };
 
 
@@ -434,99 +447,60 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const d3d11_pixel_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_pixel_shader->Release(); g_app_state->m_d3d11_pixel_shader = nullptr; });
 	g_app_state->m_d3d11_pixel_shader = d3d11_pixel_shader;
 
-	static constexpr my_vertex_t const s_cube_vertex_buffer[] =
+	ID3D11Buffer* d3d11_vlp_vertex_buffer;
+	D3D11_BUFFER_DESC d3d11_vlp_vertex_buffer_description;
+	d3d11_vlp_vertex_buffer_description.ByteWidth = 24 * s_points_count * sizeof(my_vertex_t);
+	d3d11_vlp_vertex_buffer_description.Usage = D3D11_USAGE_DYNAMIC;
+	d3d11_vlp_vertex_buffer_description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	d3d11_vlp_vertex_buffer_description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	d3d11_vlp_vertex_buffer_description.MiscFlags = 0;
+	d3d11_vlp_vertex_buffer_description.StructureByteStride = 0;
+	HRESULT const d3d11_vlp_vertex_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vlp_vertex_buffer_description, nullptr, &d3d11_vlp_vertex_buffer);
+	CHECK_RET(d3d11_vlp_vertex_buffer_created == S_OK, false);
+	g_app_state->m_d3d11_vlp_vertex_buffer = d3d11_vlp_vertex_buffer;
+	auto const d3d11_vlp_vertex_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vlp_vertex_buffer->Release(); g_app_state->m_d3d11_vlp_vertex_buffer = nullptr; });
+
+	UINT const start_slot = 0;
+	ID3D11Buffer* d3d11_vertex_buffers[] = {g_app_state->m_d3d11_vlp_vertex_buffer};
+	UINT const num_buffers = static_cast<int>(std::size(d3d11_vertex_buffers));
+	UINT const d3d11_vertex_buffer_strides[] = {sizeof(my_vertex_t)};
+	static_assert(std::size(d3d11_vertex_buffer_strides) == std::size(d3d11_vertex_buffers));
+	UINT const d3d11_vertex_buffer_offsets[] = {0};
+	static_assert(std::size(d3d11_vertex_buffer_offsets) == std::size(d3d11_vertex_buffers));
+	g_app_state->m_d3d11_immediate_context->IASetVertexBuffers(start_slot, num_buffers, d3d11_vertex_buffers, d3d11_vertex_buffer_strides, d3d11_vertex_buffer_offsets);
+
+	ID3D11Buffer* d3d11_vlp_index_buffer;
+	D3D11_BUFFER_DESC d3d11_vlp_index_buffer_description;
+	d3d11_vlp_index_buffer_description.ByteWidth = 3 * 2 * 6 * s_points_count * sizeof(std::uint32_t);
+	d3d11_vlp_index_buffer_description.Usage = D3D11_USAGE_IMMUTABLE;
+	d3d11_vlp_index_buffer_description.BindFlags = D3D11_BIND_INDEX_BUFFER;
+	d3d11_vlp_index_buffer_description.CPUAccessFlags = 0;
+	d3d11_vlp_index_buffer_description.MiscFlags = 0;
+	d3d11_vlp_index_buffer_description.StructureByteStride = 0;
+	D3D11_SUBRESOURCE_DATA d3d11_vlp_index_buffer_resource_data;
+	std::uint32_t* vlp_index_buffer_src_data = new std::uint32_t[3 * 2 * 6 * s_points_count];
+	for(int idx_point = 0; idx_point != s_points_count; ++idx_point)
 	{
-		// front, red
-		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // top, right
-		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // bottom, right
-		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // bottom, left
-		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 0.0f, 1.0f}}, // top, left
-		// back, green
-		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // top, right
-		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // bottom, right
-		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // bottom, left
-		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{0.0f, 1.0f, 0.0f, 1.0f}}, // top, left
-		// left, blue
-		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // top, right
-		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // bottom, right
-		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // bottom, left
-		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{0.0f, 0.0f, 1.0f, 1.0f}}, // top, left
-		// right, yellow
-		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // top, right
-		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // bottom, right
-		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // bottom, left
-		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 1.0f, 0.0f, 1.0f}}, // top, left
-		// top, magenta
-		{float3_t{-1.0f, +1.0f, -1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // top, right
-		{float3_t{-1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // bottom, right
-		{float3_t{+1.0f, +1.0f, +1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // bottom, left
-		{float3_t{+1.0f, +1.0f, -1.0f}, float4_t{1.0f, 0.0f, 1.0f, 1.0f}}, // top, left
-		// bottom, cyan
-		{float3_t{-1.0f, -1.0f, +1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // top, right
-		{float3_t{-1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // bottom, right
-		{float3_t{+1.0f, -1.0f, -1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // bottom, left
-		{float3_t{+1.0f, -1.0f, +1.0f}, float4_t{0.0f, 1.0f, 1.0f, 1.0f}}, // top, left
-	};
-	ID3D11Buffer* d3d11_vertex_buffer;
-	D3D11_BUFFER_DESC d3d11_vertex_buffer_description;
-	d3d11_vertex_buffer_description.ByteWidth = static_cast<int>(std::size(s_cube_vertex_buffer)) * sizeof(my_vertex_t);
-	d3d11_vertex_buffer_description.Usage = D3D11_USAGE_IMMUTABLE; // D3D11_USAGE_DYNAMIC
-	d3d11_vertex_buffer_description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	d3d11_vertex_buffer_description.CPUAccessFlags = 0; // D3D11_CPU_ACCESS_WRITE
-	d3d11_vertex_buffer_description.MiscFlags = 0;
-	d3d11_vertex_buffer_description.StructureByteStride = 0;
-	D3D11_SUBRESOURCE_DATA d3d11_vertex_buffer_resource_data;
-	d3d11_vertex_buffer_resource_data.pSysMem = s_cube_vertex_buffer;
-	d3d11_vertex_buffer_resource_data.SysMemPitch = 0;
-	d3d11_vertex_buffer_resource_data.SysMemSlicePitch = 0;
-	HRESULT const d3d11_vertex_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vertex_buffer_description, &d3d11_vertex_buffer_resource_data, &d3d11_vertex_buffer);
-	CHECK_RET(d3d11_vertex_buffer_created == S_OK, false);
-	auto const d3d11_vertex_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vertex_buffer->Release(); g_app_state->m_d3d11_vertex_buffer = nullptr; });
-	g_app_state->m_d3d11_vertex_buffer = d3d11_vertex_buffer;
+		for(int idx_face = 0; idx_face != 6; ++idx_face)
+		{
+			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 0] = idx_point * 24 + idx_face * 4 + 0;
+			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 1] = idx_point * 24 + idx_face * 4 + 1;
+			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 2] = idx_point * 24 + idx_face * 4 + 2;
+			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 3] = idx_point * 24 + idx_face * 4 + 0;
+			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 4] = idx_point * 24 + idx_face * 4 + 2;
+			vlp_index_buffer_src_data[idx_point * 3 * 2 * 6 + idx_face * 6 + 5] = idx_point * 24 + idx_face * 4 + 3;
+		}
+	}
+	d3d11_vlp_index_buffer_resource_data.pSysMem = vlp_index_buffer_src_data;
+	d3d11_vlp_index_buffer_resource_data.SysMemPitch = 0;
+	d3d11_vlp_index_buffer_resource_data.SysMemSlicePitch = 0;
+	HRESULT const d3d11_vlp_index_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vlp_index_buffer_description, &d3d11_vlp_index_buffer_resource_data, &d3d11_vlp_index_buffer);
+	CHECK_RET(d3d11_vlp_index_buffer_created == S_OK, false);
+	g_app_state->m_d3d11_vlp_index_buffer = d3d11_vlp_index_buffer;
+	auto const d3d11_vlp_index_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vlp_index_buffer->Release(); g_app_state->m_d3d11_vlp_index_buffer = nullptr; });
+	delete[] vlp_index_buffer_src_data;
 
-	UINT const d3d11_vertex_buffer_stride = sizeof(my_vertex_t);
-	UINT const d3d11_vertex_buffer_offset = 0;
-	g_app_state->m_d3d11_immediate_context->IASetVertexBuffers(0, 1, &g_app_state->m_d3d11_vertex_buffer, &d3d11_vertex_buffer_stride, &d3d11_vertex_buffer_offset);
-
-	static constexpr std::uint16_t const s_cube_index_buffer[] =
-	{
-		// front
-		(0 * 4) + 0, (0 * 4) + 1, (0 * 4) + 2,
-		(0 * 4) + 0, (0 * 4) + 2, (0 * 4) + 3,
-		// back
-		(1 * 4) + 0, (1 * 4) + 1, (1 * 4) + 2,
-		(1 * 4) + 0, (1 * 4) + 2, (1 * 4) + 3,
-		// left
-		(2 * 4) + 0, (2 * 4) + 1, (2 * 4) + 2,
-		(2 * 4) + 0, (2 * 4) + 2, (2 * 4) + 3,
-		// right
-		(3 * 4) + 0, (3 * 4) + 1, (3 * 4) + 2,
-		(3 * 4) + 0, (3 * 4) + 2, (3 * 4) + 3,
-		// top
-		(4 * 4) + 0, (4 * 4) + 1, (4 * 4) + 2,
-		(4 * 4) + 0, (4 * 4) + 2, (4 * 4) + 3,
-		// bottom
-		(5 * 4) + 0, (5 * 4) + 1, (5 * 4) + 2,
-		(5 * 4) + 0, (5 * 4) + 2, (5 * 4) + 3,
-	};
-	ID3D11Buffer* d3d11_index_buffer;
-	D3D11_BUFFER_DESC d3d11_index_buffer_description;
-	d3d11_index_buffer_description.ByteWidth = static_cast<int>(std::size(s_cube_index_buffer)) * sizeof(std::uint16_t);
-	d3d11_index_buffer_description.Usage = D3D11_USAGE_IMMUTABLE; // D3D11_USAGE_DYNAMIC
-	d3d11_index_buffer_description.BindFlags = D3D11_BIND_INDEX_BUFFER;
-	d3d11_index_buffer_description.CPUAccessFlags = 0; // D3D11_CPU_ACCESS_WRITE
-	d3d11_index_buffer_description.MiscFlags = 0;
-	d3d11_index_buffer_description.StructureByteStride = 0;
-	D3D11_SUBRESOURCE_DATA d3d11_index_buffer_resource_data;
-	d3d11_index_buffer_resource_data.pSysMem = s_cube_index_buffer;
-	d3d11_index_buffer_resource_data.SysMemPitch = 0;
-	d3d11_index_buffer_resource_data.SysMemSlicePitch = 0;
-	HRESULT const d3d11_index_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_index_buffer_description, &d3d11_index_buffer_resource_data, &d3d11_index_buffer);
-	CHECK_RET(d3d11_index_buffer_created == S_OK, false);
-	auto const d3d11_index_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_index_buffer->Release(); g_app_state->m_d3d11_index_buffer = nullptr; });
-	g_app_state->m_d3d11_index_buffer = d3d11_index_buffer;
-
-	g_app_state->m_d3d11_immediate_context->IASetIndexBuffer(g_app_state->m_d3d11_index_buffer, DXGI_FORMAT_R16_UINT, 0);
+	g_app_state->m_d3d11_immediate_context->IASetIndexBuffer(g_app_state->m_d3d11_vlp_index_buffer, DXGI_FORMAT_R32_UINT, 0);
 
 	g_app_state->m_d3d11_immediate_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -555,6 +529,17 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
 	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+
+	g_app_state->m_world = XMMatrixIdentity();
+	my_constant_buffer_t my_constant_buffer_3;
+	my_constant_buffer_3.m_world = XMMatrixTranspose(g_app_state->m_world);
+	my_constant_buffer_3.m_view = XMMatrixTranspose(g_app_state->m_view);
+	my_constant_buffer_3.m_projection = XMMatrixTranspose(g_app_state->m_projection);
+	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer_3, 0, 0);
+
+	g_app_state->m_d3d11_immediate_context->VSSetShader(g_app_state->m_d3d11_vertex_shader, nullptr, 0);
+	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
+	g_app_state->m_d3d11_immediate_context->PSSetShader(g_app_state->m_d3d11_pixel_shader, nullptr, 0);
 	/* D3D11 */
 
 	g_app_state->m_thread_end_requested.store(false);
@@ -831,33 +816,60 @@ bool render()
 
 	g_app_state->m_d3d11_immediate_context->ClearDepthStencilView(g_app_state->m_d3d11_stencil_view, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
-	g_app_state->m_world = XMMatrixRotationY(g_app_state->m_time);
-
-	my_constant_buffer_t my_constant_buffer_1;
-	my_constant_buffer_1.m_world = XMMatrixTranspose(g_app_state->m_world);
-	my_constant_buffer_1.m_view = XMMatrixTranspose(g_app_state->m_view);
-	my_constant_buffer_1.m_projection = XMMatrixTranspose(g_app_state->m_projection);
-	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer_1, 0, 0);
-
-	g_app_state->m_d3d11_immediate_context->VSSetShader(g_app_state->m_d3d11_vertex_shader, nullptr, 0);
-	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
-	g_app_state->m_d3d11_immediate_context->PSSetShader(g_app_state->m_d3d11_pixel_shader, nullptr, 0);
-
-	g_app_state->m_d3d11_immediate_context->DrawIndexed(36, 0, 0);
-
-	XMMATRIX const scale_2 = XMMatrixScaling(0.3f, 0.3f, 0.3f);
-	XMMATRIX const spin_2 = XMMatrixRotationZ(-g_app_state->m_time);
-	XMMATRIX const translate_2 = XMMatrixTranslation(-4.0f, 0.0f, 0.0f);
-	XMMATRIX const orbit_2 = XMMatrixRotationY(-g_app_state->m_time * 2.0f);
-	g_app_state->m_world_2 = scale_2 * spin_2 * translate_2 * orbit_2;
-
-	my_constant_buffer_t my_constant_buffer_2;
-	my_constant_buffer_2.m_world = XMMatrixTranspose(g_app_state->m_world_2);
-	my_constant_buffer_2.m_view = XMMatrixTranspose(g_app_state->m_view);
-	my_constant_buffer_2.m_projection = XMMatrixTranspose(g_app_state->m_projection);
-	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer_2, 0, 0);
-
-	g_app_state->m_d3d11_immediate_context->DrawIndexed(36, 0, 0);
+	// VLP
+	do{
+		std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
+		if(g_app_state->m_incomming_points_idx == 0) break;
+		static constexpr auto const s_find_idx_1 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx) -> unsigned
+		{
+			unsigned idx_1 = start_idx;
+			for(;;)
+			{
+				if(idx_1 == 0) return idx_1;
+				if(points[idx_1 - 1].m_azimuth > points[idx_1].m_azimuth) return idx_1 - 1;
+				--idx_1;
+			}
+		};
+		static constexpr auto const s_find_idx_2 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx, unsigned const& idx_1) -> unsigned
+		{
+			unsigned idx_2 = idx_1;
+			incomming_point_t const& start_point = points[start_idx];
+			for(;;)
+			{
+				if(idx_2 == 0) return idx_2;
+				if(points[idx_2].m_azimuth <= start_point.m_azimuth) return idx_2;
+				--idx_2;
+			}
+		};
+		unsigned const idx_1 = s_find_idx_1(g_app_state->m_incomming_points, g_app_state->m_incomming_points_idx - 1);
+		unsigned const idx_2 = s_find_idx_2(g_app_state->m_incomming_points, g_app_state->m_incomming_points_idx - 1, idx_1);
+		unsigned const count = g_app_state->m_incomming_points_idx - idx_2;
+		{
+			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
+			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
+			CHECK_RET_V(mapped == S_OK);
+			auto const unmap = mk::make_scope_exit([&](){ g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0); });
+			for(unsigned i = 0; i != count; ++i)
+			{
+				my_vertex_t const center{float3_t{g_app_state->m_incomming_points[idx_2 + i].m_x, g_app_state->m_incomming_points[idx_2 + i].m_y, g_app_state->m_incomming_points[idx_2 + i].m_z}, float4_t{1.0f, 1.0f, 1.0f, 1.0f}};
+				for(int j = 0; j != 24; ++j)
+				{
+					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
+					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
+					my_vertex_t& p = reinterpret_cast<my_vertex_t*>(d3d11_mapped_sub_resource.pData)[24*i+j];
+					p = center;
+					p.m_position.m_x += xx[j] * 0.005f;
+					p.m_position.m_y += yy[j] * 0.005f;
+					p.m_position.m_z += zz[j] * 0.005f;
+				}
+			}
+		}
+		// render
+		g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * count, 0, 0);
+		// render
+	}while(false);
+	// VLP
 
 	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);
 	CHECK_RET(presented == S_OK || presented == DXGI_STATUS_OCCLUDED, false);
@@ -1098,7 +1110,7 @@ void process_data(unsigned char const* const& data, int const& data_len)
 				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_x = static_cast<float>(x);
 				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_y = static_cast<float>(y);
 				g_app_state->m_incomming_points[g_app_state->m_incomming_points_idx].m_z = static_cast<float>(z);
-				++g_app_state->m_incomming_points_idx;
+				g_app_state->m_incomming_points_idx = (g_app_state->m_incomming_points_idx + 1) & (s_points_count - 1);
 			}
 		}
 	}
