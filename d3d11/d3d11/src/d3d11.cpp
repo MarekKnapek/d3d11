@@ -3,22 +3,23 @@
 #include <algorithm> // std::all_of, std::fill
 #include <atomic>
 #include <cassert>
+#include <charconv> // std::from_chars
 #include <chrono>
 #include <cmath> // std::sin, std::cos
+#include <condition_variable>
 #include <cstdint> // std::uint8_t, std::uint16_t, std::uint32_t
 #include <cstdio> // std::printf, std::puts
 #include <cstdlib> // std::exit, EXIT_SUCCESS, EXIT_FAILURE
-#include <cstring> // std::memcpy
+#include <cstring> // std::memcpy, std::strcmp, std::strncmp
 #include <cwchar> // std::wcslen
+#include <deque>
 #include <iterator> // std::size, std::cbegin, std::cend, std::begin, std::end
 #include <mutex>
 #include <numbers> // std::numbers::pi_v
+#include <queue>
 #include <string> // std::u8string, std::u16string
 #include <thread>
 #include <vector>
-#include <deque>
-#include <queue>
-#include <condition_variable>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -261,12 +262,102 @@ bool d3d11_app_seh(int const argc, char const* const* const argv, int* const& ou
 
 bool d3d11_app(int const argc, char const* const* const argv, int* const& out_exit_code)
 {
-	(void)argc;
-	(void)argv;
-
 	app_state_t* const app_state = new app_state_t{};
 	auto const app_state_free = mk::make_scope_exit([&](){ delete g_app_state; });
 	g_app_state = app_state;
+
+	static constexpr char const s_param_help[] = "/?";
+	static constexpr char const s_adapter[] = "/adapter";
+	static constexpr char const s_param_ukn[] = "/ukn";
+	static constexpr char const s_param_hw[] = "/hw";
+	static constexpr char const s_param_ref[] = "/ref";
+	static constexpr char const s_param_sw[] = "/sw";
+	static constexpr char const s_param_warp[] = "/warp";
+	static constexpr char const s_help_message[] =
+		"Possible command line arguments:\n"
+		"First argument:\n"
+		"/? Prints this help.\n"
+		"/adapter0 Uses default adapter.\n"
+		"/adapter1 Uses 1st adapter.\n"
+		"/adapter2 Uses 2nd adapter.\n"
+		"/adapter3 Uses 3rd adapter. And so on.\n"
+		"Second argument:\n"
+		"/ukn Uses D3D_DRIVER_TYPE_UNKNOWN.\n"
+		"/hw Uses D3D_DRIVER_TYPE_HARDWARE.\n"
+		"/ref Uses D3D_DRIVER_TYPE_REFERENCE.\n"
+		"/sw Uses D3D_DRIVER_TYPE_SOFTWARE.\n"
+		"/warp Uses D3D_DRIVER_TYPE_WARP.\n"
+		"Default is /adapter0 /hw.";
+	enum class driver_type_e
+	{
+		ukn,
+		hw,
+		ref,
+		sw,
+		warp,
+	};
+	static constexpr auto const s_driver_type_to_win_enum = [](driver_type_e const& driver_type) -> D3D_DRIVER_TYPE
+	{
+		switch(driver_type)
+		{
+			case driver_type_e::ukn: return D3D_DRIVER_TYPE_UNKNOWN;
+			case driver_type_e::hw: return D3D_DRIVER_TYPE_HARDWARE;
+			case driver_type_e::ref: return D3D_DRIVER_TYPE_REFERENCE;
+			case driver_type_e::sw: return D3D_DRIVER_TYPE_SOFTWARE;
+			case driver_type_e::warp: return D3D_DRIVER_TYPE_WARP;
+		}
+		CHECK_RET_V(false);
+	};
+
+	CHECK_RET(argc >= 1 && argc <= 3, false);
+	int adapter_idx = 0;
+	driver_type_e driver_type = driver_type_e::hw;
+	if(argc == 2 && std::strcmp(argv[1], s_param_help) == 0)
+	{
+		std::puts(s_help_message);
+		return true;
+	}
+	if(argc >= 2)
+	{
+		if(std::strncmp(argv[1], s_adapter, std::size(s_adapter) - 1) == 0)
+		{
+			int const len =  static_cast<int>(std::strlen(argv[1]));
+			auto const parsed = std::from_chars(argv[1] +  std::size(s_adapter) - 1, argv[1] + len, adapter_idx, 10);
+			CHECK_RET(parsed.ec == std::errc{}, false);
+			CHECK_RET(parsed.ptr == argv[1] + len, false);
+		}
+		else
+		{
+			CHECK_RET(false, false);
+		}
+	}
+	if(argc == 3)
+	{
+		if(std::strcmp(argv[2], s_param_ukn) == 0)
+		{
+			driver_type = driver_type_e::ukn;
+		}
+		else if(std::strcmp(argv[2], s_param_hw) == 0)
+		{
+			driver_type = driver_type_e::hw;
+		}
+		else if(std::strcmp(argv[2], s_param_ref) == 0)
+		{
+			driver_type = driver_type_e::ref;
+		}
+		else if(std::strcmp(argv[2], s_param_sw) == 0)
+		{
+			driver_type = driver_type_e::sw;
+		}
+		else if(std::strcmp(argv[2], s_param_warp) == 0)
+		{
+			driver_type = driver_type_e::warp;
+		}
+		else
+		{
+			CHECK_RET(false, false);
+		}
+	}
 
 	std::fill(std::begin(g_app_state->m_incomming_points), std::begin(g_app_state->m_incomming_points), incomming_point_t{});
 
@@ -293,13 +384,21 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	CHECK_RET(d311_factory_created == S_OK, false);
 	auto const d3d11_factory_free = mk::make_scope_exit([&](){ d3d11_factory->Release(); });
 
-	for(UINT d3d11_adapter_idx = 0;; ++d3d11_adapter_idx)
+	IDXGIAdapter* d3d11_selected_adapter = nullptr;
+	auto const d3d11_selected_adapter_free = mk::make_scope_exit([&](){ if(d3d11_selected_adapter){ d3d11_selected_adapter->Release(); } });
+	for(int d3d11_adapter_idx = 0;; ++d3d11_adapter_idx)
 	{
 		IDXGIAdapter1* d3d11_adapter;
-		HRESULT const d3d11_adapters_enumed = d3d11_factory->EnumAdapters1(d3d11_adapter_idx, &d3d11_adapter);
+		HRESULT const d3d11_adapters_enumed = d3d11_factory->EnumAdapters1(static_cast<UINT>(d3d11_adapter_idx), &d3d11_adapter);
 		if(d3d11_adapters_enumed == DXGI_ERROR_NOT_FOUND) break;
 		CHECK_RET(d3d11_adapters_enumed == S_OK, false);
 		auto const d3d11_adapter_free = mk::make_scope_exit([&](){ d3d11_adapter->Release(); });
+
+		if(adapter_idx != 0 && adapter_idx - 1 == d3d11_adapter_idx)
+		{
+			d3d11_selected_adapter = d3d11_adapter;
+			d3d11_selected_adapter->AddRef();
+		}
 
 		DXGI_ADAPTER_DESC1 d3d11_adapter_description;
 		HRESULT const d3d11_adapter_got_description = d3d11_adapter->GetDesc1(&d3d11_adapter_description);
@@ -323,6 +422,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 		std::printf("LUID:                    {%u, %d}\n", static_cast<unsigned>(d3d11_adapter_description.AdapterLuid.LowPart), static_cast<int>(d3d11_adapter_description.AdapterLuid.HighPart));
 		std::printf("Flags:                   0x%08X (%u%s%s)\n\n", static_cast<unsigned>(d3d11_adapter_description.Flags), static_cast<unsigned>(d3d11_adapter_description.Flags), (d3d11_adapter_description.Flags & DXGI_ADAPTER_FLAG_REMOTE) != 0 ? static_cast<char const*>(s_d3d11_DXGI_ADAPTER_FLAG_REMOTE) : static_cast<char const*>(""), (d3d11_adapter_description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0 ? static_cast<char const*>(s_d3d11_DXGI_ADAPTER_FLAG_SOFTWARE) : static_cast<char const*>(""));
 	};
+	CHECK_RET((adapter_idx != 0 && d3d11_selected_adapter != nullptr) ||(adapter_idx == 0), false);
 
 	ID3D11Device* d3d11_device;
 	D3D_FEATURE_LEVEL d3d11_feature_level;
@@ -331,7 +431,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	#ifndef NDEBUG
 	d3d11_device_flags |= D3D11_CREATE_DEVICE_DEBUG;
 	#endif
-	HRESULT const d3d11_device_created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, d3d11_device_flags, nullptr, 0, D3D11_SDK_VERSION, &d3d11_device, &d3d11_feature_level, &d3d11_immediate_context);
+	HRESULT const d3d11_device_created = D3D11CreateDevice(d3d11_selected_adapter, s_driver_type_to_win_enum(driver_type), nullptr, d3d11_device_flags, nullptr, 0, D3D11_SDK_VERSION, &d3d11_device, &d3d11_feature_level, &d3d11_immediate_context);
 	CHECK_RET(d3d11_device_created == S_OK, false);
 	auto const d3d11_device_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_device->Release(); g_app_state->m_d3d11_device = nullptr; });
 	#ifndef NDEBUG
