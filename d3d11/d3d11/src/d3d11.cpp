@@ -144,8 +144,8 @@ struct alignas(256) frame_t
 };
 struct frames_t
 {
-	std::queue<frame_t*> m_empty_frames;
-	std::queue<frame_t*> m_ready_frames;
+	std::queue<std::unique_ptr<frame_t>> m_empty_frames;
+	std::queue<std::unique_ptr<frame_t>> m_ready_frames;
 	std::condition_variable m_cv;
 	std::mutex m_mtx;
 	std::atomic<bool> m_stop_requested;
@@ -682,7 +682,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	for(int i = 0; i != s_frames_count; ++i)
 	{
-		g_frames.m_empty_frames.push(new frame_t);
+		g_frames.m_empty_frames.push(std::make_unique<frame_t>());
 	}
 	g_frames.m_stop_requested.store(false);
 	std::thread frames_thread{&frames_thread_proc};
@@ -968,14 +968,14 @@ bool render()
 
 	do
 	{
-		frame_t* frame;
+		std::unique_ptr<frame_t> frame;
 		{
 			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
 			if(g_frames.m_ready_frames.empty())
 			{
 				break;
 			}
-			frame = g_frames.m_ready_frames.front();
+			frame = std::move(g_frames.m_ready_frames.front());
 			g_frames.m_ready_frames.pop();
 		}
 		if(frame->m_count != 0)
@@ -994,7 +994,7 @@ bool render()
 		}
 		{
 			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
-			g_frames.m_empty_frames.push(frame);
+			g_frames.m_empty_frames.push(std::move(frame));
 		}
 		g_frames.m_cv.notify_one();
 	}while(false);
@@ -1314,14 +1314,14 @@ void frames_thread_proc()
 {
 	for(;;)
 	{
-		frame_t* frame;
+		std::unique_ptr<frame_t> frame;
 		{
 			std::unique_lock<std::mutex> lck{g_frames.m_mtx};
 			for(;;)
 			{
 				if(!g_frames.m_empty_frames.empty())
 				{
-					frame = g_frames.m_empty_frames.front();
+					frame = std::move(g_frames.m_empty_frames.front());
 					g_frames.m_empty_frames.pop();
 					break;
 				}
@@ -1389,7 +1389,7 @@ void frames_thread_proc()
 		}while(false);
 		{
 			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
-			g_frames.m_ready_frames.push(frame);
+			g_frames.m_ready_frames.push(std::move(frame));
 		}
 	}
 }
