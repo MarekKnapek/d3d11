@@ -371,6 +371,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	bool const window_created = create_main_window(g_app_state->m_main_window_class, &g_app_state->m_main_window);
 	CHECK_RET(window_created, false);
+	auto const window_free = mk::make_scope_exit([&](){ if(g_app_state->m_main_window != nullptr){ BOOL const destroyed = DestroyWindow(g_app_state->m_main_window); CHECK_RET_V(destroyed != 0); } });
 
 	bool const window_size_refreshed = refresh_window_size(g_app_state->m_main_window, &g_app_state->m_width, &g_app_state->m_height);
 	CHECK_RET(window_size_refreshed, false);
@@ -752,6 +753,7 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 	{
 		case WM_DESTROY:
 		{
+			g_app_state->m_main_window = nullptr;
 			PostQuitMessage(EXIT_SUCCESS);
 		}
 		break;
