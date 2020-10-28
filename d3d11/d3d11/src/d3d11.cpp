@@ -1259,15 +1259,11 @@ void process_data(unsigned char const* const& data, int const& data_len)
 
 
 	CHECK_RET(data_len == sizeof(single_mode_packet_t));
-	single_mode_packet_t const& packet = *reinterpret_cast<single_mode_packet_t const*>(data);
-	CHECK_RET(packet.m_factory.m_product_id == s_vlp16_id);
-	CHECK_RET(packet.m_factory.m_return_mode == s_strongest_mode || packet.m_factory.m_return_mode == s_last_mode);
-	CHECK_RET(packet.m_timestamp < s_max_timestamp);
-	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_flag == s_flag; }));
-	CHECK_RET(std::all_of(std::cbegin(packet.m_data_blocks), std::cend(packet.m_data_blocks), [](data_block_t const& data_block){ return data_block.m_azimuth < s_max_azimuth; }));
+	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
+	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
 	for(int data_block_idx = 0; data_block_idx != static_cast<int>(std::size(packet.m_data_blocks)); ++data_block_idx)
 	{
-		data_block_t const& data_block = packet.m_data_blocks[data_block_idx];
+		auto const& data_block = packet.m_data_blocks[data_block_idx];
 		std::uint16_t const azimuth_gap = [&]() -> std::uint16_t
 		{
 			if(data_block_idx == 0)
@@ -1276,7 +1272,7 @@ void process_data(unsigned char const* const& data, int const& data_len)
 			}
 			else
 			{
-				data_block_t const& data_block_prev = packet.m_data_blocks[data_block_idx - 1];
+				auto const& data_block_prev = packet.m_data_blocks[data_block_idx - 1];
 				bool const wrap = data_block.m_azimuth - data_block_prev.m_azimuth < 0;
 				std::uint16_t const azimuth_gap = !wrap ? data_block.m_azimuth - data_block_prev.m_azimuth : data_block.m_azimuth - data_block_prev.m_azimuth + 360 * 100;
 				return azimuth_gap;
@@ -1284,11 +1280,10 @@ void process_data(unsigned char const* const& data, int const& data_len)
 		}();
 		for(int firing_sequence_idx = 0; firing_sequence_idx != static_cast<int>(std::size(data_block.m_firing_sequence)); ++firing_sequence_idx)
 		{
-			firing_sequence_t const& firing_sequence = data_block.m_firing_sequence[firing_sequence_idx];
-			for(int channel_data_idx = 0; channel_data_idx != static_cast<int>(std::size(firing_sequence.m_channel_data)); ++channel_data_idx)
+			auto const& firing_sequence = data_block.m_firing_sequence[firing_sequence_idx];
+			for(int channel_data_idx = 0; channel_data_idx != mk::vlp16::s_channels_count; ++channel_data_idx)
 			{
-				channel_data_t const& channel_data = firing_sequence.m_channel_data[channel_data_idx];
-				double const r = static_cast<double>(channel_data.m_distance * 2) / 1'000.0; // distance in meters
+				double const r = static_cast<double>(firing_sequence.m_distance[channel_data_idx] * 2) / 1'000.0; // distance in meters
 				//double const a = deg_to_rad(static_cast<double>(data_block.m_azimuth) / 100.0); // azimuth in radians
 				double const azimuth_correction = (static_cast<double>(azimuth_gap) / 100.0) / (2.0 * s_firing_sequence_len_us) * (((firing_sequence_idx == 0) ? 0.0 : s_firing_sequence_len_us) + channel_data_idx * s_firing_delay_us); // azimuth correction in degrees
 				double const pa = deg_to_rad(static_cast<double>(data_block.m_azimuth) / 100.0 + azimuth_correction); // precision azimuth in radians
