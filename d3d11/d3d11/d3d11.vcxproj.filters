@@ -9,9 +9,21 @@
     <ClCompile Include="src\d3d11.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\vlp16.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\scope_exit.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\circular_buffer.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\vlp16.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\bit_utils.h">
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
@@ -39,5 +51,13 @@
     <None Include="src\build_all_shaders.bat">
       <Filter>src</Filter>
     </None>
+    <None Include="src\circular_buffer.inl">
+      <Filter>src</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="src\circular_buffer.natvis">
+      <Filter>src</Filter>
+    </Natvis>
   </ItemGroup>
 </Project>
