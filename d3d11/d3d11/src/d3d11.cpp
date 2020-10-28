@@ -1,5 +1,9 @@
 #include "scope_exit.h"
 
+#include "bit_utils.h"
+#include "circular_buffer.h"
+#include "vlp16.h"
+
 #include <algorithm> // std::all_of, std::fill
 #include <atomic>
 #include <cassert>
@@ -82,16 +86,10 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
-constexpr bool is_power_of_two(unsigned const& n) noexcept
-{
-	return n == 0 || (n & (n - 1)) == 0;
-};
-
-
 static constexpr unsigned const s_points_count = 512 * 1024;
 
 
-static_assert(is_power_of_two(s_points_count));
+static_assert(mk::is_power_of_two(s_points_count));
 
 
 struct float3_t
@@ -1216,7 +1214,7 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	struct channel_data_t
 	{
 		std::uint16_t m_distance;
-		std::uint8_t m_reflectivity;
+		std::uint8_t m_reflexivity;
 	};
 	#pragma pack(pop)
 	static_assert(sizeof(channel_data_t) == 3);
