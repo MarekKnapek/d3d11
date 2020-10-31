@@ -12,6 +12,9 @@
     <ClCompile Include="src\vlp16.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\circular_buffer_test.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\scope_exit.h">
@@ -23,7 +26,10 @@
     <ClInclude Include="src\vlp16.h">
       <Filter>src</Filter>
     </ClInclude>
-    <ClInclude Include="src\bit_utils.h">
+    <ClInclude Include="src\mk_utils.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\mk_bit_utils.h">
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
@@ -52,6 +58,9 @@
       <Filter>src</Filter>
     </None>
     <None Include="src\circular_buffer.inl">
+      <Filter>src</Filter>
+    </None>
+    <None Include="src\mk_utils.inl">
       <Filter>src</Filter>
     </None>
   </ItemGroup>

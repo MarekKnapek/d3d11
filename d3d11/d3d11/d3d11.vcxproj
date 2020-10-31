@@ -19,12 +19,14 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\circular_buffer_test.cpp" />
     <ClCompile Include="src\d3d11.cpp" />
     <ClCompile Include="src\vlp16.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\bit_utils.h" />
     <ClInclude Include="src\circular_buffer.h" />
+    <ClInclude Include="src\mk_bit_utils.h" />
+    <ClInclude Include="src\mk_utils.h" />
     <ClInclude Include="src\scope_exit.h" />
     <ClInclude Include="src\vlp16.h" />
   </ItemGroup>
@@ -81,6 +83,7 @@
     <None Include="src\build_vertex_shader_debug.bat" />
     <None Include="src\build_vertex_shader_release.bat" />
     <None Include="src\circular_buffer.inl" />
+    <None Include="src\mk_utils.inl" />
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="src\circular_buffer.natvis" />
