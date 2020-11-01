@@ -136,10 +136,10 @@ void mk::vlp16::convert_to_xyza(std::uint16_t const& previous_block_azimuth, sin
 	{
 		auto const& data_block = packet.m_data_blocks[data_block_idx];
 		std::uint16_t const previous_azimuth = data_block_idx == 0 ? previous_block_azimuth : packet.m_data_blocks[data_block_idx - 1].m_azimuth;
-		bool const azimuth_wrap = data_block.m_azimuth < previous_azimuth;
+		bool const azimuth_wrap = data_block.m_azimuth <= previous_azimuth;
 		std::uint16_t const azimuth_diff = !azimuth_wrap ? data_block.m_azimuth - previous_azimuth : data_block.m_azimuth - previous_azimuth + 360 * 100;
 		double const ad = static_cast<double>(azimuth_diff / 100.0); // azimuth diff in degrees
-		double const a = static_cast<double>(data_block.m_azimuth) / 100.0; // block azimuth in degrees
+		double const azimuth_deg = static_cast<double>(data_block.m_azimuth) / 100.0; // block azimuth in degrees
 		for(int firing_sequence_idx = 0; firing_sequence_idx != s_firing_sequences_count; ++firing_sequence_idx)
 		{
 			auto const& firing_sequence = data_block.m_firing_sequence[firing_sequence_idx];
@@ -147,12 +147,14 @@ void mk::vlp16::convert_to_xyza(std::uint16_t const& previous_block_azimuth, sin
 			{
 				double const r = static_cast<double>(firing_sequence.m_distance[channel_data_idx] * 2) / 1'000.0; // distance in 2 milimeters -> distance in meters
 				double const ac = ad * (((firing_sequence_idx == 0 ? 0.0 : s_firing_sequence_len_us) + channel_data_idx * s_firing_delay_us) / (static_cast<double>(s_firing_sequences_count) * s_firing_sequence_len_us)); // azimuth correction in degrees
-				double const pa = deg_to_rad(a + ac); // precision azimuth in radians
+				double const pa_deg_tmp = azimuth_deg + ac;
+				double const pa_deg = pa_deg_tmp >= 360.0 ? (pa_deg_tmp - 360.0) : pa_deg_tmp;
+				double const pa = deg_to_rad(pa_deg); // precision azimuth in radians
 				double const tmp = r * s_vertical_angle_cos[channel_data_idx];
 				double const x = tmp * std::sin(pa); // x in meters
 				double const y = tmp * std::cos(pa); // y in meters
 				double const z = r * s_vertical_angle_sin[channel_data_idx] + s_vertical_correction_m[channel_data_idx]; // z in meters
-				accept_point_fn(x, y, z, pa, ctx);
+				accept_point_fn(x, y, z, pa_deg, ctx);
 			}
 		}
 	}

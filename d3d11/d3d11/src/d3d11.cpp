@@ -130,9 +130,38 @@ struct incomming_point_t
 	float m_z;
 };
 
+struct incomming_point2_t
+{
+	double m_x;
+	double m_y;
+	double m_z;
+};
+
+
+
+struct incomming_data_t
+{
+	std::vector<double> m_azimuths;
+	std::vector<incomming_point2_t> m_points;
+};
+
+template<typename buffer_t>
+struct low_latency_buffers
+{
+	std::vector<std::unique_ptr<buffer_t>> m_free_buff;
+	std::condition_variable m_free_cv;
+	std::mutex m_free_mtx;
+
+	std::queue<std::unique_ptr<buffer_t>> m_full_buffer;
+	std::condition_variable m_full_cv;
+	std::mutex m_full_mtx;
+};
+
+low_latency_buffers<incomming_data_t> g_low_incomming_data;
+
 
 #pragma warning(push)
-#pragma warning(disable:4324)
+#pragma warning(disable:4324) // warning C4324: 'frame_t': structure was padded due to alignment specifier
 static constexpr int const s_frames_count = 4;
 static constexpr int const s_vertices_per_cube = 8;
 static constexpr int const s_indices_per_cube = 2 * 3 * 6;
@@ -185,7 +214,9 @@ struct app_state_t
 	unsigned m_incomming_points_idx_2;
 	mk::counter_t m_packet_coutner;
 	std::uint16_t m_previous_block_azimuth;
-	incomming_point_t m_incomming_points[s_points_count];
+	//incomming_point_t m_incomming_points[s_points_count];
+	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
+	mk::ring_buffer_t<incomming_point2_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points2;
 };
 
 
@@ -359,7 +390,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 		}
 	}
 
-	std::fill(std::begin(g_app_state->m_incomming_points), std::begin(g_app_state->m_incomming_points), incomming_point_t{});
+	//std::fill(std::begin(g_app_state->m_incomming_points), std::begin(g_app_state->m_incomming_points), incomming_point_t{});
 
 	HRESULT const com_initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
 	CHECK_RET(com_initialized == S_OK, false);
@@ -686,16 +717,25 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	}
 	g_frames.m_stop_requested.store(false);
 	std::thread frames_thread{&frames_thread_proc};
-	auto const frames_thread_free = mk::make_scope_exit([&](){ g_frames.m_stop_requested.store(true); g_frames.m_cv.notify_one(); frames_thread.join(); });
+	auto const frames_thread_free = mk::make_scope_exit([&](){ g_frames.m_stop_requested.store(true); g_app_state->m_thread_end_requested.store(true); g_frames.m_cv.notify_all(); g_low_incomming_data.m_free_cv.notify_all(); g_low_incomming_data.m_full_cv.notify_all(); frames_thread.join(); });
 	/* D3D11 */
 
 	g_app_state->m_thread_end_requested.store(false);
 	std::thread network_thread{&network_thread_proc};
-	auto const network_thread_free = mk::make_scope_exit([&](){ g_app_state->m_thread_end_requested.store(true); network_thread.join(); });
+	auto const network_thread_free = mk::make_scope_exit([&](){ g_frames.m_stop_requested.store(true); g_app_state->m_thread_end_requested.store(true); g_frames.m_cv.notify_all(); g_low_incomming_data.m_free_cv.notify_all(); g_low_incomming_data.m_full_cv.notify_all(); network_thread.join(); });
 
 	g_app_state->m_prev_time = std::chrono::high_resolution_clock::now();
 	g_app_state->m_frames_counter.rename("frames");
 	g_app_state->m_packet_coutner.rename("packets");
+
+	{
+		std::lock_guard<std::mutex> const lck{g_low_incomming_data.m_free_mtx};
+		g_low_incomming_data.m_free_buff.resize(128);
+		for(auto& e : g_low_incomming_data.m_free_buff)
+		{
+			e = std::make_unique<incomming_data_t>();
+		}
+	}
 
 	ShowWindow(g_app_state->m_main_window, SW_SHOW);
 
@@ -1075,7 +1115,7 @@ bool render()
 void network_thread_proc()
 {
 	static constexpr incomming_point_t const s_incomming_point{};
-	std::fill(std::begin(g_app_state->m_incomming_points), std::end(g_app_state->m_incomming_points), s_incomming_point);
+	//std::fill(std::begin(g_app_state->m_incomming_points), std::end(g_app_state->m_incomming_points), s_incomming_point);
 	g_app_state->m_incomming_points_idx = 0;
 	g_app_state->m_previous_block_azimuth = 0;
 
@@ -1121,7 +1161,9 @@ void network_thread_proc()
 			CHECK_RET_V(err == WSAETIMEDOUT);
 			continue;
 		}
+
 		process_data(buff, receieved);
+
 		g_app_state->m_packet_coutner.count();
 	}
 }
@@ -1132,7 +1174,7 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	#undef CHECK_RET
 	#define CHECK_RET(X) do{ if(X){}else{ [[unlikely]] return; } }while(false)
 
-	static constexpr auto const s_accept_point = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
+	/*static constexpr auto const s_accept_point = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
 	{
 		app_state_t* const app_state = static_cast<app_state_t*>(ctx);
 		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_azimuth = static_cast<float>(a);
@@ -1140,15 +1182,55 @@ void process_data(unsigned char const* const& data, int const& data_len)
 		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_y = static_cast<float>(y);
 		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_z = static_cast<float>(z);
 		app_state->m_incomming_points_idx = (app_state->m_incomming_points_idx + 1) & (s_points_count - 1);
+	};*/
+	static constexpr auto const s_accept_point2 = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
+	{
+		incomming_data_t& incomming_data = *static_cast<incomming_data_t*>(ctx);
+		assert(incomming_data.m_azimuths.size() == incomming_data.m_points.size());
+		incomming_data.m_azimuths.push_back(a);
+		incomming_data.m_points.push_back(incomming_point2_t{x, y, z});
 	};
 
-	std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
+
+	//std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
+
+	std::unique_ptr<incomming_data_t> incomming_data;
+	{
+		std::unique_lock<std::mutex> lck{g_low_incomming_data.m_free_mtx};
+		for(;;)
+		{
+			if(!g_low_incomming_data.m_free_buff.empty())
+			{
+				incomming_data = std::move(g_low_incomming_data.m_free_buff.back());
+				g_low_incomming_data.m_free_buff.pop_back();
+				break;
+			}
+			else
+			{
+				g_low_incomming_data.m_free_cv.wait(lck);
+				if(g_app_state->m_thread_end_requested.load() == true)
+				{
+					return;
+				}
+			}
+		}
+	}
+	auto const return_data = mk::make_scope_exit([&]()
+	{
+		{
+			std::lock_guard<std::mutex> const lck{g_low_incomming_data.m_full_mtx};
+			g_low_incomming_data.m_full_buffer.push(std::move(incomming_data));
+		}
+		g_low_incomming_data.m_full_cv.notify_one();
+	});
 
 	CHECK_RET(data_len == mk::vlp16::s_packet_size);
 	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
 	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
-	mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point, g_app_state);
+	//mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point, g_app_state);
+	mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point2, incomming_data.get());
 	g_app_state->m_previous_block_azimuth = packet.m_data_blocks[mk::vlp16::s_data_blocks_count - 1].m_azimuth;
+
 
 	#pragma pop_macro("CHECK_RET")
 }
@@ -1180,6 +1262,7 @@ void frames_thread_proc()
 		}
 		do
 		{
+			#if 0
 			static constexpr auto const s_prev_idx = [](unsigned const& idx) -> unsigned
 			{
 				return (idx - 1) & (static_cast<unsigned>(s_points_count) - 1);
@@ -1229,10 +1312,144 @@ void frames_thread_proc()
 					p.m_position.m_z += zz[j] * 0.005f;
 				}
 			}
+			#else
+
+
+			std::vector<std::unique_ptr<incomming_data_t>> incomming_data;
+			{
+				std::unique_lock<std::mutex> lck{g_low_incomming_data.m_full_mtx};
+				for(;;)
+				{
+					if(!g_low_incomming_data.m_full_buffer.empty())
+					{
+						do
+						{
+							incomming_data.push_back(std::move(g_low_incomming_data.m_full_buffer.front()));
+							g_low_incomming_data.m_full_buffer.pop();
+						}while(!g_low_incomming_data.m_full_buffer.empty());
+						break;
+					}
+					else
+					{
+						g_low_incomming_data.m_full_cv.wait(lck);
+						if(g_app_state->m_thread_end_requested.load() == true)
+						{
+							return;
+						}
+					}
+				}
+			}
+			auto return_data = mk::make_scope_exit([&]()
+			{
+				{
+					std::lock_guard<std::mutex> const lck{g_low_incomming_data.m_free_mtx};
+					for(auto& e : incomming_data)
+					{
+						g_low_incomming_data.m_free_buff.push_back(std::move(e));
+					}
+				}
+				g_low_incomming_data.m_free_cv.notify_one();
+			});
+
+
+			for(auto& ee : incomming_data)
+			{
+				for(auto const& e : ee->m_azimuths)
+				{
+					g_app_state->m_incomming_azimuths.push(e);
+				}
+				for(auto const& e : ee->m_points)
+				{
+					g_app_state->m_incomming_points2.push(e);
+				}
+				ee->m_azimuths.clear();
+				ee->m_points.clear();
+			}
+
+			return_data.execute();
+
+
+			frame->m_count = 0;
+			auto& azimuths = g_app_state->m_incomming_azimuths;
+			if(azimuths.is_empty())
+			{
+				break;
+			}
+			int const n = azimuths.size();
+			auto const& back = azimuths.back();
+			#if 0
+			int min_val_i = n - 1;
+			for(int i = 0 + 1; i != n; ++i)
+			{
+				int const idx = n - i - 1;
+				if(azimuths[idx] > azimuths[idx + 1])
+				{
+					min_val_i = i - 1;
+					break;
+				}
+			}
+			int target_i = min_val_i;
+			for(int i = min_val_i + 1; i != n; ++i)
+			{
+				int const idx = n - i - 1;
+				if(azimuths[idx] <= back)
+				{
+					target_i = i - 1;
+					break;
+				}
+			}
+			int const to_pop = n - target_i - 1;
+			#else
+			auto const fn_find_min = [&]()
+			{
+				for(int i = n - 1; i != 0; --i)
+				{
+					if(azimuths[i - 1] > azimuths[i])
+					{
+						return i;
+					}
+				}
+				return 1;
+			};
+			int const min_val_i = fn_find_min();
+			int target_i = 0;
+			for(int i = min_val_i - 1; i != -1; --i)
+			{
+				if(azimuths[i] <= back)
+				{
+					target_i = i + 1;
+					break;
+				}
+			}
+			int const to_pop = target_i;
+			#endif
+			azimuths.pop(to_pop);
+			auto& incomming_point2 = g_app_state->m_incomming_points2;
+			incomming_point2.pop(to_pop);
+			int const new_count = n - to_pop;
+			for(int i = 0; i != new_count; ++i)
+			{
+				auto const& ip = incomming_point2[i];
+				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
+				for(int j = 0; j != s_vertices_per_cube; ++j)
+				{
+					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
+					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
+					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+					my_vertex_t& p = frame->m_vertices[i * s_vertices_per_cube + j];
+					p = center;
+					p.m_position.m_x += xx[j] * 0.005f;
+					p.m_position.m_y += yy[j] * 0.005f;
+					p.m_position.m_z += zz[j] * 0.005f;
+				}
+			}
+			frame->m_count = new_count;
+			#endif
 		}while(false);
 		{
 			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
 			g_frames.m_ready_frames.push(std::move(frame));
 		}
+
 	}
 }
