@@ -1,6 +1,7 @@
 #include "scope_exit.h"
 
 #include "mk_bit_utils.h"
+#include "mk_counter.h"
 #include "ring_buffer.h"
 #include "vlp16.h"
 
@@ -175,14 +176,14 @@ struct app_state_t
 	XMMATRIX m_view;
 	XMMATRIX m_projection;
 	std::chrono::high_resolution_clock::time_point m_prev_time;
-	std::chrono::high_resolution_clock::time_point m_fps_time;
-	int m_fps_count;
+	mk::counter_t m_frames_counter;
 	ID3D11Buffer* m_d3d11_vlp_vertex_buffer;
 	ID3D11Buffer* m_d3d11_vlp_index_buffer;
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
 	unsigned m_incomming_points_idx;
 	unsigned m_incomming_points_idx_2;
+	mk::counter_t m_packet_coutner;
 	incomming_point_t m_incomming_points[s_points_count];
 };
 
@@ -692,7 +693,8 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const network_thread_free = mk::make_scope_exit([&](){ g_app_state->m_thread_end_requested.store(true); network_thread.join(); });
 
 	g_app_state->m_prev_time = std::chrono::high_resolution_clock::now();
-	g_app_state->m_fps_time = g_app_state->m_prev_time;
+	g_app_state->m_frames_counter.rename("frames");
+	g_app_state->m_packet_coutner.rename("packets");
 
 	ShowWindow(g_app_state->m_main_window, SW_SHOW);
 
@@ -1064,15 +1066,7 @@ bool render()
 	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);
 	CHECK_RET(presented == S_OK || presented == DXGI_STATUS_OCCLUDED, false);
 
-	++g_app_state->m_fps_count;
-	auto const long_term_diff = now - g_app_state->m_fps_time;
-	if(long_term_diff >= std::chrono::seconds{5})
-	{
-		float const long_term_diff_float_s = std::chrono::duration_cast<std::chrono::duration<float>>(long_term_diff).count();
-		std::printf("%f FPS. Presented %d frames in %f seconds.\n", static_cast<float>(g_app_state->m_fps_count) / long_term_diff_float_s, g_app_state->m_fps_count, long_term_diff_float_s);
-		g_app_state->m_fps_time = now;
-		g_app_state->m_fps_count = 0;
-	}
+	g_app_state->m_frames_counter.count();
 
 	return true;
 }
@@ -1126,6 +1120,7 @@ void network_thread_proc()
 			continue;
 		}
 		process_data(buff, receieved);
+		g_app_state->m_packet_coutner.count();
 	}
 }
 
