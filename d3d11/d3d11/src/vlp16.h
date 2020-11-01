@@ -15,6 +15,7 @@ namespace mk
 
 		static constexpr int const s_points_per_packet = s_data_blocks_count * s_firing_sequences_count * s_channels_count;
 		static constexpr int const s_packets_per_second = 754;
+		static constexpr int const s_points_per_second = s_points_per_packet * s_packets_per_second;
 		static constexpr int const s_packet_size = 1206;
 
 		struct firing_sequence_t
@@ -43,9 +44,12 @@ namespace mk
 			data_block_t m_data_blocks[s_data_blocks_count];
 		};
 
+		typedef void(* const& accept_point_fn_t)(double const& x, double const& y, double const& z, double const& a, void* const& ctx);
+
 
 		single_mode_packet_t raw_data_to_single_mode_packet(void const* const& data, int const& len);
 		bool verify_single_mode_packet(single_mode_packet_t const& packet);
+		void convert_to_xyza(std::uint16_t const& previous_block_azimuth, single_mode_packet_t const& packet, accept_point_fn_t const& accept_point_fn, void* const& ctx);
 
 
 	}
