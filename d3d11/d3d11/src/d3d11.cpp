@@ -1,7 +1,7 @@
 #include "scope_exit.h"
 
 #include "mk_bit_utils.h"
-#include "circular_buffer.h"
+#include "ring_buffer.h"
 #include "vlp16.h"
 
 #include <algorithm> // std::all_of, std::fill

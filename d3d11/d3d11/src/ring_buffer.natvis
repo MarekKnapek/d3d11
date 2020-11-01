@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <nv:AutoVisualizer xmlns:nv="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
-	<nv:Type Name="mk::circular_buffer_t&lt;*&gt;">
+	<nv:Type Name="mk::ring_buffer_t&lt;*&gt;">
 		<nv:Intrinsic Name="size" Expression="m_write_idx - m_read_idx"></nv:Intrinsic>
 		<nv:Intrinsic Name="capacity" Expression="s_capacity_v"></nv:Intrinsic>
 		<nv:DisplayString>{{ size={size()} }}</nv:DisplayString>

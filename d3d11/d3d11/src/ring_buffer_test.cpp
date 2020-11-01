@@ -1,11 +1,11 @@
-#include "circular_buffer.h"
+#include "ring_buffer.h"
 
 #include <string>
 
 #include <stdio.h>
 
 
-void print(mk::circular_buffer_t<std::string, 8> const& buff)
+void print(mk::ring_buffer_t<std::string, 8> const& buff)
 {
 	for(auto const& e : buff.first_continuous_part())
 	{
@@ -20,7 +20,7 @@ void print(mk::circular_buffer_t<std::string, 8> const& buff)
 
 void test()
 {
-	mk::circular_buffer_t<std::string, 8> buff;
+	mk::ring_buffer_t<std::string, 8> buff;
 	for(int j = 0; j != 10; ++j)
 	{
 		buff.push();

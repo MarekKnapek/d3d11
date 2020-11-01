@@ -12,15 +12,12 @@
     <ClCompile Include="src\vlp16.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\circular_buffer_test.cpp">
+    <ClCompile Include="src\ring_buffer_test.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\scope_exit.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="src\circular_buffer.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\vlp16.h">
@@ -30,6 +27,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\mk_bit_utils.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ring_buffer.h">
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
@@ -57,15 +57,15 @@
     <None Include="src\build_all_shaders.bat">
       <Filter>src</Filter>
     </None>
-    <None Include="src\circular_buffer.inl">
+    <None Include="src\mk_utils.inl">
       <Filter>src</Filter>
     </None>
-    <None Include="src\mk_utils.inl">
+    <None Include="src\ring_buffer.inl">
       <Filter>src</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
-    <Natvis Include="src\circular_buffer.natvis">
+    <Natvis Include="src\ring_buffer.natvis">
       <Filter>src</Filter>
     </Natvis>
   </ItemGroup>

@@ -1,7 +1,7 @@
 #pragma once
 
 
-#include "circular_buffer.h"
+#include "ring_buffer.h"
 
 #include "mk_bit_utils.h"
 
@@ -9,7 +9,7 @@
 
 
 template<typename t, int capacity_v>
-mk::circular_buffer_t<t, capacity_v>::circular_buffer_t() noexcept :
+mk::ring_buffer_t<t, capacity_v>::ring_buffer_t() noexcept :
 	m_read_idx(),
 	m_write_idx(),
 	m_arr()
@@ -18,8 +18,8 @@ mk::circular_buffer_t<t, capacity_v>::circular_buffer_t() noexcept :
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_t<t, capacity_v>::circular_buffer_t(circular_buffer_t const& other) :
-	circular_buffer_t()
+mk::ring_buffer_t<t, capacity_v>::ring_buffer_t(ring_buffer_t const& other) :
+	ring_buffer_t()
 {
 	int const n = other.size();
 	for(int i = 0; i != n; ++i)
@@ -29,14 +29,14 @@ mk::circular_buffer_t<t, capacity_v>::circular_buffer_t(circular_buffer_t const&
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_t<t, capacity_v>::circular_buffer_t(circular_buffer_t&& other) noexcept :
-	circular_buffer_t()
+mk::ring_buffer_t<t, capacity_v>::ring_buffer_t(ring_buffer_t&& other) noexcept :
+	ring_buffer_t()
 {
 	swap(other);
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_t<t, capacity_v>& mk::circular_buffer_t<t, capacity_v>::operator=(circular_buffer_t const& other)
+mk::ring_buffer_t<t, capacity_v>& mk::ring_buffer_t<t, capacity_v>::operator=(ring_buffer_t const& other)
 {
 	int const n1 = size();
 	int const n2 = other.size();
@@ -57,14 +57,14 @@ mk::circular_buffer_t<t, capacity_v>& mk::circular_buffer_t<t, capacity_v>::oper
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_t<t, capacity_v>& mk::circular_buffer_t<t, capacity_v>::operator=(circular_buffer_t&& other) noexcept
+mk::ring_buffer_t<t, capacity_v>& mk::ring_buffer_t<t, capacity_v>::operator=(ring_buffer_t&& other) noexcept
 {
 	swap(other);
 	return *this;
 }
 
 template<typename t, int capacity_v>
-void mk::circular_buffer_t<t, capacity_v>::swap(circular_buffer_t& other) noexcept
+void mk::ring_buffer_t<t, capacity_v>::swap(ring_buffer_t& other) noexcept
 {
 	int const n1 = size();
 	int const n2 = other.size();
@@ -85,43 +85,43 @@ void mk::circular_buffer_t<t, capacity_v>::swap(circular_buffer_t& other) noexce
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_t<t, capacity_v>::~circular_buffer_t()
+mk::ring_buffer_t<t, capacity_v>::~ring_buffer_t()
 {
 	clear();
 }
 
 template<typename t, int capacity_v>
-bool mk::circular_buffer_t<t, capacity_v>::is_empty() const
+bool mk::ring_buffer_t<t, capacity_v>::is_empty() const
 {
 	return size() == 0;
 }
 
 template<typename t, int capacity_v>
-bool mk::circular_buffer_t<t, capacity_v>::is_full() const
+bool mk::ring_buffer_t<t, capacity_v>::is_full() const
 {
 	return size() == s_capacity_v;
 }
 
 template<typename t, int capacity_v>
-int mk::circular_buffer_t<t, capacity_v>::size() const
+int mk::ring_buffer_t<t, capacity_v>::size() const
 {
 	return m_write_idx - m_read_idx;
 }
 
 template<typename t, int capacity_v>
-int mk::circular_buffer_t<t, capacity_v>::capacity() const
+int mk::ring_buffer_t<t, capacity_v>::capacity() const
 {
 	return s_capacity_v;
 }
 
 template<typename t, int capacity_v>
-void mk::circular_buffer_t<t, capacity_v>::clear()
+void mk::ring_buffer_t<t, capacity_v>::clear()
 {
 	pop(size());
 }
 
 template<typename t, int capacity_v>
-t const& mk::circular_buffer_t<t, capacity_v>::front() const
+t const& mk::ring_buffer_t<t, capacity_v>::front() const
 {
 	assert(!is_empty());
 	t const& ref = operator[](0);
@@ -129,7 +129,7 @@ t const& mk::circular_buffer_t<t, capacity_v>::front() const
 }
 
 template<typename t, int capacity_v>
-t& mk::circular_buffer_t<t, capacity_v>::front()
+t& mk::ring_buffer_t<t, capacity_v>::front()
 {
 	assert(!is_empty());
 	t& ref = operator[](0);
@@ -137,7 +137,7 @@ t& mk::circular_buffer_t<t, capacity_v>::front()
 }
 
 template<typename t, int capacity_v>
-t const& mk::circular_buffer_t<t, capacity_v>::back() const
+t const& mk::ring_buffer_t<t, capacity_v>::back() const
 {
 	assert(!is_empty());
 	t const& ref = operator[](size() - 1);
@@ -145,7 +145,7 @@ t const& mk::circular_buffer_t<t, capacity_v>::back() const
 }
 
 template<typename t, int capacity_v>
-t& mk::circular_buffer_t<t, capacity_v>::back()
+t& mk::ring_buffer_t<t, capacity_v>::back()
 {
 	assert(!is_empty());
 	t& ref = operator[](size() - 1);
@@ -153,7 +153,7 @@ t& mk::circular_buffer_t<t, capacity_v>::back()
 }
 
 template<typename t, int capacity_v>
-t const& mk::circular_buffer_t<t, capacity_v>::operator[](int const& idx) const
+t const& mk::ring_buffer_t<t, capacity_v>::operator[](int const& idx) const
 {
 	assert(idx < size());
 	t const& ref = internal_get(m_read_idx + idx);
@@ -161,7 +161,7 @@ t const& mk::circular_buffer_t<t, capacity_v>::operator[](int const& idx) const
 }
 
 template<typename t, int capacity_v>
-t& mk::circular_buffer_t<t, capacity_v>::operator[](int const& idx)
+t& mk::ring_buffer_t<t, capacity_v>::operator[](int const& idx)
 {
 	assert(idx < size());
 	t& ref = internal_get(m_read_idx + idx);
@@ -169,50 +169,50 @@ t& mk::circular_buffer_t<t, capacity_v>::operator[](int const& idx)
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_const_continuous_part_t<t> mk::circular_buffer_t<t, capacity_v>::first_continuous_part() const
+mk::ring_buffer_const_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::first_continuous_part() const
 {
 	bool const is_split = (m_read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
 	t const* const begin = &internal_get(m_read_idx + 0);
 	t const* const end = &internal_get(m_read_idx + size());
 	t const* const array_end = reinterpret_cast<t const*>(m_arr[0].m_buff) + s_capacity_v;
 	t const* const first_end = is_split ? array_end : end;
-	return mk::circular_buffer_const_continuous_part_t<t>{begin, first_end};
+	return mk::ring_buffer_const_continuous_part_t<t>{begin, first_end};
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_continuous_part_t<t> mk::circular_buffer_t<t, capacity_v>::first_continuous_part()
+mk::ring_buffer_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::first_continuous_part()
 {
 	bool const is_split = (m_read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
 	t* const begin = &internal_get(m_read_idx + 0);
 	t* const end = &internal_get(m_read_idx + size());
 	t* const array_end = reinterpret_cast<t*>(m_arr[0].m_buff) + s_capacity_v;
 	t* const first_end = is_split ? array_end : end;
-	return mk::circular_buffer_continuous_part_t<t>{begin, first_end};
+	return mk::ring_buffer_continuous_part_t<t>{begin, first_end};
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_const_continuous_part_t<t> mk::circular_buffer_t<t, capacity_v>::second_continuous_part() const
+mk::ring_buffer_const_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::second_continuous_part() const
 {
 	bool const is_split = (m_read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
 	t const* const end = &internal_get(m_read_idx + size());
 	t const* const array_begin = reinterpret_cast<t const*>(m_arr[0].m_buff) + 0;
 	t const* const second_begin = is_split ? array_begin : end;
-	return mk::circular_buffer_const_continuous_part_t<t>{second_begin, end};
+	return mk::ring_buffer_const_continuous_part_t<t>{second_begin, end};
 }
 
 template<typename t, int capacity_v>
-mk::circular_buffer_continuous_part_t<t> mk::circular_buffer_t<t, capacity_v>::second_continuous_part()
+mk::ring_buffer_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::second_continuous_part()
 {
 	bool const is_split = (m_read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
 	t* const end = &internal_get(m_read_idx + size());
 	t* const array_begin = reinterpret_cast<t*>(m_arr[0].m_buff) + 0;
 	t* const second_begin = is_split ? array_begin : end;
-	return mk::circular_buffer_continuous_part_t<t>{second_begin, end};
+	return mk::ring_buffer_continuous_part_t<t>{second_begin, end};
 }
 
 
 template<typename t, int capacity_v>
-void mk::circular_buffer_t<t, capacity_v>::resize(int const& count)
+void mk::ring_buffer_t<t, capacity_v>::resize(int const& count)
 {
 	assert(count <= s_capacity_v);
 	int const n = size();
@@ -227,7 +227,7 @@ void mk::circular_buffer_t<t, capacity_v>::resize(int const& count)
 }
 
 template<typename t, int capacity_v>
-t& mk::circular_buffer_t<t, capacity_v>::push()
+t& mk::ring_buffer_t<t, capacity_v>::push()
 {
 	assert(!is_full());
 	return push(t{});
@@ -235,7 +235,7 @@ t& mk::circular_buffer_t<t, capacity_v>::push()
 
 template<typename t, int capacity_v>
 template<typename u>
-t& mk::circular_buffer_t<t, capacity_v>::push(u&& val)
+t& mk::ring_buffer_t<t, capacity_v>::push(u&& val)
 {
 	assert(!is_full());
 	t& ref = internal_get(m_write_idx);
@@ -245,13 +245,13 @@ t& mk::circular_buffer_t<t, capacity_v>::push(u&& val)
 }
 
 template<typename t, int capacity_v>
-void mk::circular_buffer_t<t, capacity_v>::pop()
+void mk::ring_buffer_t<t, capacity_v>::pop()
 {
 	return pop(1);
 }
 
 template<typename t, int capacity_v>
-void mk::circular_buffer_t<t, capacity_v>::pop(int const& count)
+void mk::ring_buffer_t<t, capacity_v>::pop(int const& count)
 {
 	assert(count <= size());
 	for(int i = 0; i != count; ++i)
@@ -263,14 +263,14 @@ void mk::circular_buffer_t<t, capacity_v>::pop(int const& count)
 }
 
 template<typename t, int capacity_v>
-t const& mk::circular_buffer_t<t, capacity_v>::internal_get(unsigned const& idx) const
+t const& mk::ring_buffer_t<t, capacity_v>::internal_get(unsigned const& idx) const
 {
 	t const& ref = *static_cast<t const*>(static_cast<void const*>(m_arr[idx & (s_capacity_v - 1)].m_buff));
 	return ref;
 }
 
 template<typename t, int capacity_v>
-t& mk::circular_buffer_t<t, capacity_v>::internal_get(unsigned const& idx)
+t& mk::ring_buffer_t<t, capacity_v>::internal_get(unsigned const& idx)
 {
 	t& ref = *static_cast<t*>(static_cast<void*>(m_arr[idx & (s_capacity_v - 1)].m_buff));
 	return ref;
