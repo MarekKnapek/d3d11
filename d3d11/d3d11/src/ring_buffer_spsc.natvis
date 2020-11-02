@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<nv:AutoVisualizer xmlns:nv="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+	<nv:Type Name="mk::ring_buffer_spsc_t&lt;*&gt;">
+		<nv:Intrinsic Name="size" Expression="m_write_idx._Storage._Value - m_read_idx._Storage._Value"></nv:Intrinsic>
+		<nv:Intrinsic Name="capacity" Expression="s_capacity_v"></nv:Intrinsic>
+		<nv:DisplayString>{{ size={size()} }}</nv:DisplayString>
+		<nv:Expand>
+			<nv:Item Name="[size]">size()</nv:Item>
+			<nv:Item Name="[capacity]">capacity()</nv:Item>
+			<nv:IndexListItems>
+				<nv:Size>size()</nv:Size>
+				<nv:ValueNode>*($T1*)(m_arr[(m_read_idx._Storage._Value + $i) &amp; (s_capacity_v - 1)].m_buff)</nv:ValueNode>
+			</nv:IndexListItems>
+		</nv:Expand>
+	</nv:Type>
+</nv:AutoVisualizer>

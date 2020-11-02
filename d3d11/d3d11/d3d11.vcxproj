@@ -20,8 +20,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\mk_counter.cpp" />
-    <ClCompile Include="src\ring_buffer_test.cpp" />
     <ClCompile Include="src\d3d11.cpp" />
+    <ClCompile Include="src\ring_buffer_spsc.cpp" />
     <ClCompile Include="src\vlp16.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -29,6 +29,7 @@
     <ClInclude Include="src\ring_buffer.h" />
     <ClInclude Include="src\mk_bit_utils.h" />
     <ClInclude Include="src\mk_utils.h" />
+    <ClInclude Include="src\ring_buffer_spsc.h" />
     <ClInclude Include="src\scope_exit.h" />
     <ClInclude Include="src\vlp16.h" />
   </ItemGroup>
@@ -86,9 +87,11 @@
     <None Include="src\build_vertex_shader_release.bat" />
     <None Include="src\ring_buffer.inl" />
     <None Include="src\mk_utils.inl" />
+    <None Include="src\ring_buffer_spsc.inl" />
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="src\ring_buffer.natvis" />
+    <Natvis Include="src\ring_buffer_spsc.natvis" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>

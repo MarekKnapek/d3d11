@@ -2,7 +2,8 @@
 
 #include "mk_bit_utils.h"
 #include "mk_counter.h"
-#include "ring_buffer.h"
+#include "mk_utils.h"
+#include "ring_buffer_spsc.h"
 #include "vlp16.h"
 
 #include <algorithm> // std::all_of, std::fill
@@ -87,10 +88,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
-static constexpr unsigned const s_points_count = 512 * 1024;
-
-
-static_assert(mk::is_power_of_two(s_points_count));
+static constexpr int const s_points_count = mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second);
 
 
 struct float3_t
@@ -124,40 +122,10 @@ struct my_constant_buffer_t
 
 struct incomming_point_t
 {
-	float m_azimuth;
-	float m_x;
-	float m_y;
-	float m_z;
-};
-
-struct incomming_point2_t
-{
 	double m_x;
 	double m_y;
 	double m_z;
 };
-
-
-
-struct incomming_data_t
-{
-	std::vector<double> m_azimuths;
-	std::vector<incomming_point2_t> m_points;
-};
-
-template<typename buffer_t>
-struct low_latency_buffers
-{
-	std::vector<std::unique_ptr<buffer_t>> m_free_buff;
-	std::condition_variable m_free_cv;
-	std::mutex m_free_mtx;
-
-	std::queue<std::unique_ptr<buffer_t>> m_full_buffer;
-	std::condition_variable m_full_cv;
-	std::mutex m_full_mtx;
-};
-
-low_latency_buffers<incomming_data_t> g_low_incomming_data;
 
 
 #pragma warning(push)
@@ -210,13 +178,11 @@ struct app_state_t
 	ID3D11Buffer* m_d3d11_vlp_index_buffer;
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
-	unsigned m_incomming_points_idx;
-	unsigned m_incomming_points_idx_2;
 	mk::counter_t m_packet_coutner;
 	std::uint16_t m_previous_block_azimuth;
-	//incomming_point_t m_incomming_points[s_points_count];
-	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
-	mk::ring_buffer_t<incomming_point2_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points2;
+	mk::ring_buffer_spsc_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
+	mk::ring_buffer_spsc_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
+	std::unique_ptr<frame_t> m_last_frame;
 };
 
 
@@ -717,25 +683,25 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	}
 	g_frames.m_stop_requested.store(false);
 	std::thread frames_thread{&frames_thread_proc};
-	auto const frames_thread_free = mk::make_scope_exit([&](){ g_frames.m_stop_requested.store(true); g_app_state->m_thread_end_requested.store(true); g_frames.m_cv.notify_all(); g_low_incomming_data.m_free_cv.notify_all(); g_low_incomming_data.m_full_cv.notify_all(); frames_thread.join(); });
+	auto const frames_thread_free = mk::make_scope_exit([&]()
+	{
+		g_frames.m_stop_requested.store(true);
+		g_frames.m_cv.notify_one();
+		frames_thread.join();
+	});
 	/* D3D11 */
 
 	g_app_state->m_thread_end_requested.store(false);
 	std::thread network_thread{&network_thread_proc};
-	auto const network_thread_free = mk::make_scope_exit([&](){ g_frames.m_stop_requested.store(true); g_app_state->m_thread_end_requested.store(true); g_frames.m_cv.notify_all(); g_low_incomming_data.m_free_cv.notify_all(); g_low_incomming_data.m_full_cv.notify_all(); network_thread.join(); });
+	auto const network_thread_free = mk::make_scope_exit([&]()
+	{
+		g_app_state->m_thread_end_requested.store(true);
+		network_thread.join();
+	});
 
 	g_app_state->m_prev_time = std::chrono::high_resolution_clock::now();
 	g_app_state->m_frames_counter.rename("frames");
 	g_app_state->m_packet_coutner.rename("packets");
-
-	{
-		std::lock_guard<std::mutex> const lck{g_low_incomming_data.m_free_mtx};
-		g_low_incomming_data.m_free_buff.resize(128);
-		for(auto& e : g_low_incomming_data.m_free_buff)
-		{
-			e = std::make_unique<incomming_data_t>();
-		}
-	}
 
 	ShowWindow(g_app_state->m_main_window, SW_SHOW);
 
@@ -1012,111 +978,53 @@ bool render()
 		std::unique_ptr<frame_t> frame;
 		{
 			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
-			if(g_frames.m_ready_frames.empty())
+			if(!g_frames.m_ready_frames.empty())
 			{
-				break;
+				frame = std::move(g_frames.m_ready_frames.front());
+				g_frames.m_ready_frames.pop();
 			}
-			frame = std::move(g_frames.m_ready_frames.front());
-			g_frames.m_ready_frames.pop();
 		}
-		if(frame->m_count != 0)
+		auto const return_frame = mk::make_scope_exit([&]()
 		{
+			using std::swap;
+			if(frame)
+			{
+				swap(g_app_state->m_last_frame, frame);
+			}
+			if(frame)
+			{
+				{
+					std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
+					g_frames.m_empty_frames.push(std::move(frame));
+				}
+				g_frames.m_cv.notify_one();
+			}
+		});
+		if(!frame)
+		{
+			swap(frame, g_app_state->m_last_frame);
+		}
+		if(frame)
+		{
+			assert(frame->m_count != 0);
 			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
 			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
 			CHECK_RET_V(mapped == S_OK);
 			std::memcpy(d3d11_mapped_sub_resource.pData, frame->m_vertices, sizeof(my_vertex_t) * s_vertices_per_cube * frame->m_count);
 			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0);
 			g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * frame->m_count, 0, 0);
+			g_app_state->m_frames_counter.count();
 		}
-		else
-		{
-			volatile int a;
-			a = 0;
-		}
-		{
-			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
-			g_frames.m_empty_frames.push(std::move(frame));
-		}
-		g_frames.m_cv.notify_one();
 	}while(false);
-
-	#if 0
-	// VLP
-	do{
-		static constexpr auto const s_prev_idx = [](unsigned const& idx) -> unsigned
-		{
-			return (idx - 1) & (static_cast<unsigned>(s_points_count) - 1);
-		};
-		static constexpr auto const s_find_idx_1 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx) -> unsigned
-		{
-			unsigned idx_1 = start_idx;
-			for(;;)
-			{
-				unsigned const prev = s_prev_idx(idx_1);
-				if(points[prev].m_azimuth > points[idx_1].m_azimuth) return prev;
-				idx_1 = prev;
-			}
-		};
-		static constexpr auto const s_find_idx_2 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx, unsigned const& idx_1) -> unsigned
-		{
-			unsigned idx_2 = idx_1;
-			incomming_point_t const& start_point = points[start_idx];
-			for(;;)
-			{
-				unsigned const prev = s_prev_idx(idx_2);
-				if(points[idx_2].m_azimuth <= start_point.m_azimuth) return idx_2;
-				idx_2 = prev;
-			}
-		};
-
-		std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
-		unsigned const idx = s_prev_idx(g_app_state->m_incomming_points_idx);
-		if(g_app_state->m_incomming_points[idx].m_azimuth == 0.0f) break;
-		unsigned const idx_1 = s_find_idx_1(g_app_state->m_incomming_points, idx);
-		unsigned const idx_2 = s_find_idx_2(g_app_state->m_incomming_points, idx, idx_1);
-		unsigned const count = (g_app_state->m_incomming_points_idx - idx_2) & (static_cast<unsigned>(s_points_count) - 1);
-		{
-			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
-			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
-			CHECK_RET_V(mapped == S_OK);
-			for(unsigned i = 0; i != count; ++i)
-			{
-				incomming_point_t const& ip = g_app_state->m_incomming_points[(idx_2 + i) & (static_cast<unsigned>(s_points_count) - 1)];
-				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
-				for(int j = 0; j != s_vertices_per_cube; ++j)
-				{
-					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
-					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
-					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
-					my_vertex_t& p = reinterpret_cast<my_vertex_t*>(d3d11_mapped_sub_resource.pData)[s_vertices_per_cube*i+j];
-					p = center;
-					p.m_position.m_x += xx[j] * 0.005f;
-					p.m_position.m_y += yy[j] * 0.005f;
-					p.m_position.m_z += zz[j] * 0.005f;
-				}
-			}
-			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0);
-		}
-		// render
-		g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * count, 0, 0);
-		// render
-	}while(false);
-	// VLP
-	#endif
 
 	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);
 	CHECK_RET(presented == S_OK || presented == DXGI_STATUS_OCCLUDED, false);
-
-	g_app_state->m_frames_counter.count();
 
 	return true;
 }
 
 void network_thread_proc()
 {
-	static constexpr incomming_point_t const s_incomming_point{};
-	//std::fill(std::begin(g_app_state->m_incomming_points), std::end(g_app_state->m_incomming_points), s_incomming_point);
-	g_app_state->m_incomming_points_idx = 0;
 	g_app_state->m_previous_block_azimuth = 0;
 
 	WORD const wsa_version = MAKEWORD(2, 2);
@@ -1174,63 +1082,21 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	#undef CHECK_RET
 	#define CHECK_RET(X) do{ if(X){}else{ [[unlikely]] return; } }while(false)
 
-	/*static constexpr auto const s_accept_point = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
+	static constexpr auto const s_accept_point = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
 	{
-		app_state_t* const app_state = static_cast<app_state_t*>(ctx);
-		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_azimuth = static_cast<float>(a);
-		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_x = static_cast<float>(x);
-		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_y = static_cast<float>(y);
-		app_state->m_incomming_points[app_state->m_incomming_points_idx].m_z = static_cast<float>(z);
-		app_state->m_incomming_points_idx = (app_state->m_incomming_points_idx + 1) & (s_points_count - 1);
-	};*/
-	static constexpr auto const s_accept_point2 = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
-	{
-		incomming_data_t& incomming_data = *static_cast<incomming_data_t*>(ctx);
-		assert(incomming_data.m_azimuths.size() == incomming_data.m_points.size());
-		incomming_data.m_azimuths.push_back(a);
-		incomming_data.m_points.push_back(incomming_point2_t{x, y, z});
+		app_state_t& app_state = *static_cast<app_state_t*>(ctx);
+		if(!app_state.m_incomming_azimuths.is_full() && !app_state.m_incomming_points.is_full())
+		{
+			app_state.m_incomming_azimuths.push(a);
+			app_state.m_incomming_points.push(incomming_point_t{x, y, z});
+		}
 	};
-
-
-	//std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
-
-	std::unique_ptr<incomming_data_t> incomming_data;
-	{
-		std::unique_lock<std::mutex> lck{g_low_incomming_data.m_free_mtx};
-		for(;;)
-		{
-			if(!g_low_incomming_data.m_free_buff.empty())
-			{
-				incomming_data = std::move(g_low_incomming_data.m_free_buff.back());
-				g_low_incomming_data.m_free_buff.pop_back();
-				break;
-			}
-			else
-			{
-				g_low_incomming_data.m_free_cv.wait(lck);
-				if(g_app_state->m_thread_end_requested.load() == true)
-				{
-					return;
-				}
-			}
-		}
-	}
-	auto const return_data = mk::make_scope_exit([&]()
-	{
-		{
-			std::lock_guard<std::mutex> const lck{g_low_incomming_data.m_full_mtx};
-			g_low_incomming_data.m_full_buffer.push(std::move(incomming_data));
-		}
-		g_low_incomming_data.m_full_cv.notify_one();
-	});
 
 	CHECK_RET(data_len == mk::vlp16::s_packet_size);
 	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
 	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
-	//mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point, g_app_state);
-	mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point2, incomming_data.get());
+	mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point, g_app_state);
 	g_app_state->m_previous_block_azimuth = packet.m_data_blocks[mk::vlp16::s_data_blocks_count - 1].m_azimuth;
-
 
 	#pragma pop_macro("CHECK_RET")
 }
@@ -1252,154 +1118,38 @@ void frames_thread_proc()
 				}
 				else
 				{
-					g_frames.m_cv.wait(lck);
 					if(g_frames.m_stop_requested.load() == true)
 					{
 						return;
 					}
+					g_frames.m_cv.wait(lck);
 				}
 			}
 		}
+		auto const return_frame = mk::make_scope_exit([&]()
+		{
+			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
+			if(frame->m_count != 0)
+			{
+				g_frames.m_ready_frames.push(std::move(frame));
+			}
+			else
+			{
+				g_frames.m_empty_frames.push(std::move(frame));
+			}
+		});
+
 		do
 		{
-			#if 0
-			static constexpr auto const s_prev_idx = [](unsigned const& idx) -> unsigned
-			{
-				return (idx - 1) & (static_cast<unsigned>(s_points_count) - 1);
-			};
-			static constexpr auto const s_find_idx_1 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx) -> unsigned
-			{
-				unsigned idx_1 = start_idx;
-				for(;;)
-				{
-					unsigned const prev = s_prev_idx(idx_1);
-					if(points[prev].m_azimuth > points[idx_1].m_azimuth) return prev;
-					idx_1 = prev;
-				}
-			};
-			static constexpr auto const s_find_idx_2 = [](incomming_point_t const(&points)[s_points_count], unsigned const& start_idx, unsigned const& idx_1) -> unsigned
-			{
-				unsigned idx_2 = idx_1;
-				incomming_point_t const& start_point = points[start_idx];
-				for(;;)
-				{
-					unsigned const prev = s_prev_idx(idx_2);
-					if(points[idx_2].m_azimuth <= start_point.m_azimuth) return idx_2;
-					idx_2 = prev;
-				}
-			};
-			std::lock_guard<std::mutex> const lck{g_app_state->m_points_mutex};
-			frame->m_count = 0;
-			unsigned const idx = s_prev_idx(g_app_state->m_incomming_points_idx);
-			if(g_app_state->m_incomming_points[idx].m_azimuth == 0.0f) break;
-			unsigned const idx_1 = s_find_idx_1(g_app_state->m_incomming_points, idx);
-			unsigned const idx_2 = s_find_idx_2(g_app_state->m_incomming_points, idx, idx_1);
-			unsigned const count = (g_app_state->m_incomming_points_idx - idx_2) & (static_cast<unsigned>(s_points_count) - 1);
-			frame->m_count = count;
-			for(unsigned i = 0; i != count; ++i)
-			{
-				incomming_point_t const& ip = g_app_state->m_incomming_points[(idx_2 + i) & (static_cast<unsigned>(s_points_count) - 1)];
-				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
-				for(int j = 0; j != s_vertices_per_cube; ++j)
-				{
-					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
-					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
-					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
-					my_vertex_t& p = frame->m_vertices[s_vertices_per_cube * i + j];
-					p = center;
-					p.m_position.m_x += xx[j] * 0.005f;
-					p.m_position.m_y += yy[j] * 0.005f;
-					p.m_position.m_z += zz[j] * 0.005f;
-				}
-			}
-			#else
-
-
-			std::vector<std::unique_ptr<incomming_data_t>> incomming_data;
-			{
-				std::unique_lock<std::mutex> lck{g_low_incomming_data.m_full_mtx};
-				for(;;)
-				{
-					if(!g_low_incomming_data.m_full_buffer.empty())
-					{
-						do
-						{
-							incomming_data.push_back(std::move(g_low_incomming_data.m_full_buffer.front()));
-							g_low_incomming_data.m_full_buffer.pop();
-						}while(!g_low_incomming_data.m_full_buffer.empty());
-						break;
-					}
-					else
-					{
-						g_low_incomming_data.m_full_cv.wait(lck);
-						if(g_app_state->m_thread_end_requested.load() == true)
-						{
-							return;
-						}
-					}
-				}
-			}
-			auto return_data = mk::make_scope_exit([&]()
-			{
-				{
-					std::lock_guard<std::mutex> const lck{g_low_incomming_data.m_free_mtx};
-					for(auto& e : incomming_data)
-					{
-						g_low_incomming_data.m_free_buff.push_back(std::move(e));
-					}
-				}
-				g_low_incomming_data.m_free_cv.notify_one();
-			});
-
-
-			for(auto& ee : incomming_data)
-			{
-				for(auto const& e : ee->m_azimuths)
-				{
-					g_app_state->m_incomming_azimuths.push(e);
-				}
-				for(auto const& e : ee->m_points)
-				{
-					g_app_state->m_incomming_points2.push(e);
-				}
-				ee->m_azimuths.clear();
-				ee->m_points.clear();
-			}
-
-			return_data.execute();
-
-
 			frame->m_count = 0;
 			auto& azimuths = g_app_state->m_incomming_azimuths;
-			if(azimuths.is_empty())
+			auto& incomming_point2 = g_app_state->m_incomming_points;
+			int const n = (mk::min)(azimuths.size(), incomming_point2.size());
+			if(n == 0)
 			{
 				break;
 			}
-			int const n = azimuths.size();
-			auto const& back = azimuths.back();
-			#if 0
-			int min_val_i = n - 1;
-			for(int i = 0 + 1; i != n; ++i)
-			{
-				int const idx = n - i - 1;
-				if(azimuths[idx] > azimuths[idx + 1])
-				{
-					min_val_i = i - 1;
-					break;
-				}
-			}
-			int target_i = min_val_i;
-			for(int i = min_val_i + 1; i != n; ++i)
-			{
-				int const idx = n - i - 1;
-				if(azimuths[idx] <= back)
-				{
-					target_i = i - 1;
-					break;
-				}
-			}
-			int const to_pop = n - target_i - 1;
-			#else
+			auto const& back = azimuths[n - 1];
 			auto const fn_find_min = [&]()
 			{
 				for(int i = n - 1; i != 0; --i)
@@ -1422,9 +1172,7 @@ void frames_thread_proc()
 				}
 			}
 			int const to_pop = target_i;
-			#endif
 			azimuths.pop(to_pop);
-			auto& incomming_point2 = g_app_state->m_incomming_points2;
 			incomming_point2.pop(to_pop);
 			int const new_count = n - to_pop;
 			for(int i = 0; i != new_count; ++i)
@@ -1444,12 +1192,7 @@ void frames_thread_proc()
 				}
 			}
 			frame->m_count = new_count;
-			#endif
 		}while(false);
-		{
-			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
-			g_frames.m_ready_frames.push(std::move(frame));
-		}
 
 	}
 }

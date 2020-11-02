@@ -14,7 +14,7 @@ mk::ring_buffer_t<t, capacity_v>::ring_buffer_t() noexcept :
 	m_write_idx(),
 	m_arr()
 {
-	static_assert(s_capacity_v != 0 && mk::is_power_of_two(s_capacity_v));
+	static_assert(s_capacity_v != 0 && s_capacity_v > 0 && mk::is_power_of_two(s_capacity_v));
 }
 
 template<typename t, int capacity_v>
