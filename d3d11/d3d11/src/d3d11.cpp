@@ -135,7 +135,7 @@ static constexpr int const s_vertices_per_cube = 8;
 static constexpr int const s_indices_per_cube = 2 * 3 * 6;
 struct alignas(256) frame_t
 {
-	my_vertex_t m_vertices[s_vertices_per_cube * s_points_count];
+	float3_t m_vertices[s_points_count];
 	unsigned m_count;
 };
 struct frames_t
@@ -175,6 +175,7 @@ struct app_state_t
 	std::chrono::high_resolution_clock::time_point m_prev_time;
 	mk::counter_t m_frames_counter;
 	ID3D11Buffer* m_d3d11_vlp_vertex_buffer;
+	ID3D11Buffer* m_d3d11_vlp_instance_buffer;
 	ID3D11Buffer* m_d3d11_vlp_index_buffer;
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
@@ -546,7 +547,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_d3d11_vertex_shader = d3d11_vertex_shader;
 
 	ID3D11InputLayout* d3d11_input_layout;
-	D3D11_INPUT_ELEMENT_DESC d3d11_shader_imput_layout[1];
+	D3D11_INPUT_ELEMENT_DESC d3d11_shader_imput_layout[2];
 	d3d11_shader_imput_layout[0].SemanticName = "POSITION";
 	d3d11_shader_imput_layout[0].SemanticIndex = 0;
 	d3d11_shader_imput_layout[0].Format = DXGI_FORMAT_R32G32B32_FLOAT;
@@ -554,6 +555,13 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	d3d11_shader_imput_layout[0].AlignedByteOffset = 0;
 	d3d11_shader_imput_layout[0].InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
 	d3d11_shader_imput_layout[0].InstanceDataStepRate = 0;
+	d3d11_shader_imput_layout[1].SemanticName = "TEXCOORD";
+	d3d11_shader_imput_layout[1].SemanticIndex = 0;
+	d3d11_shader_imput_layout[1].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+	d3d11_shader_imput_layout[1].InputSlot = 1;
+	d3d11_shader_imput_layout[1].AlignedByteOffset = 0;
+	d3d11_shader_imput_layout[1].InputSlotClass = D3D11_INPUT_PER_INSTANCE_DATA;
+	d3d11_shader_imput_layout[1].InstanceDataStepRate = 1;
 	HRESULT const d3d11_input_layout_created = g_app_state->m_d3d11_device->CreateInputLayout(d3d11_shader_imput_layout, static_cast<int>(std::size(d3d11_shader_imput_layout)), g_vertex_shader_main, std::size(g_vertex_shader_main), &d3d11_input_layout);
 	CHECK_RET(d3d11_input_layout_created == S_OK, false);
 	auto const d3d11_input_layout_free = mk::make_scope_exit([&](){ d3d11_input_layout->Release(); });
@@ -566,29 +574,63 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const d3d11_pixel_shader_free = mk::make_scope_exit([&](){ g_app_state->m_d3d11_pixel_shader->Release(); g_app_state->m_d3d11_pixel_shader = nullptr; });
 	g_app_state->m_d3d11_pixel_shader = d3d11_pixel_shader;
 
+	static constexpr my_vertex_t const s_cube_vertex_pattern[] =
+	{
+		{-1.0f, +1.0f, +1.0f}, /* right, up, front */
+		{-1.0f, -1.0f, +1.0f}, /* right, down, front */
+		{+1.0f, -1.0f, +1.0f}, /* left, down, front */
+		{+1.0f, +1.0f, +1.0f}, /* left, up, front */
+		{-1.0f, +1.0f, -1.0f}, /* right, up, back */
+		{-1.0f, -1.0f, -1.0f}, /* right, down, back */
+		{+1.0f, -1.0f, -1.0f}, /* left, down, back */
+		{+1.0f, +1.0f, -1.0f}, /* left, up, back */
+	};
+	static_assert(std::size(s_cube_vertex_pattern) == s_vertices_per_cube);
+
 	ID3D11Buffer* d3d11_vlp_vertex_buffer;
 	D3D11_BUFFER_DESC d3d11_vlp_vertex_buffer_description;
-	d3d11_vlp_vertex_buffer_description.ByteWidth = s_vertices_per_cube * s_points_count * sizeof(my_vertex_t);
-	d3d11_vlp_vertex_buffer_description.Usage = D3D11_USAGE_DYNAMIC;
+	d3d11_vlp_vertex_buffer_description.ByteWidth = s_vertices_per_cube * sizeof(my_vertex_t);
+	d3d11_vlp_vertex_buffer_description.Usage = D3D11_USAGE_IMMUTABLE;
 	d3d11_vlp_vertex_buffer_description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	d3d11_vlp_vertex_buffer_description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	d3d11_vlp_vertex_buffer_description.CPUAccessFlags = 0;
 	d3d11_vlp_vertex_buffer_description.MiscFlags = 0;
 	d3d11_vlp_vertex_buffer_description.StructureByteStride = 0;
-	HRESULT const d3d11_vlp_vertex_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vlp_vertex_buffer_description, nullptr, &d3d11_vlp_vertex_buffer);
+	my_vertex_t cube_vertices[std::size(s_cube_vertex_pattern)];
+	std::memcpy(cube_vertices, s_cube_vertex_pattern, sizeof(s_cube_vertex_pattern));
+	static constexpr float const s_cube_size = 0.005f;
+	for(auto& my_vertex : cube_vertices){ my_vertex.m_position.m_x *= s_cube_size; my_vertex.m_position.m_y *= s_cube_size; my_vertex.m_position.m_z *= s_cube_size; }
+	D3D11_SUBRESOURCE_DATA d3d11_vlp_vertex_buffer_resource_data;
+	d3d11_vlp_vertex_buffer_resource_data.pSysMem = cube_vertices;
+	d3d11_vlp_vertex_buffer_resource_data.SysMemPitch = 0;
+	d3d11_vlp_vertex_buffer_resource_data.SysMemSlicePitch = 0;
+	HRESULT const d3d11_vlp_vertex_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vlp_vertex_buffer_description, &d3d11_vlp_vertex_buffer_resource_data, &d3d11_vlp_vertex_buffer);
 	CHECK_RET(d3d11_vlp_vertex_buffer_created == S_OK, false);
 	g_app_state->m_d3d11_vlp_vertex_buffer = d3d11_vlp_vertex_buffer;
 	auto const d3d11_vlp_vertex_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vlp_vertex_buffer->Release(); g_app_state->m_d3d11_vlp_vertex_buffer = nullptr; });
 
+	ID3D11Buffer* d3d11_vlp_instance_buffer;
+	D3D11_BUFFER_DESC d3d11_vlp_instance_buffer_description;
+	d3d11_vlp_instance_buffer_description.ByteWidth = s_points_count * sizeof(float3_t);
+	d3d11_vlp_instance_buffer_description.Usage = D3D11_USAGE_DYNAMIC;
+	d3d11_vlp_instance_buffer_description.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	d3d11_vlp_instance_buffer_description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	d3d11_vlp_instance_buffer_description.MiscFlags = 0;
+	d3d11_vlp_instance_buffer_description.StructureByteStride = 0;
+	HRESULT const d3d11_vlp_instance_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vlp_instance_buffer_description, nullptr, &d3d11_vlp_instance_buffer);
+	CHECK_RET(d3d11_vlp_instance_buffer_created == S_OK, false);
+	g_app_state->m_d3d11_vlp_instance_buffer = d3d11_vlp_instance_buffer;
+	auto const d3d11_vlp_instance_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vlp_instance_buffer->Release(); g_app_state->m_d3d11_vlp_instance_buffer = nullptr; });
+
 	UINT const start_slot = 0;
-	ID3D11Buffer* d3d11_vertex_buffers[] = {g_app_state->m_d3d11_vlp_vertex_buffer};
+	ID3D11Buffer* d3d11_vertex_buffers[] = {g_app_state->m_d3d11_vlp_vertex_buffer, g_app_state->m_d3d11_vlp_instance_buffer};
 	UINT const num_buffers = static_cast<int>(std::size(d3d11_vertex_buffers));
-	UINT const d3d11_vertex_buffer_strides[] = {sizeof(my_vertex_t)};
+	UINT const d3d11_vertex_buffer_strides[] = {sizeof(my_vertex_t), sizeof(float3_t)};
 	static_assert(std::size(d3d11_vertex_buffer_strides) == std::size(d3d11_vertex_buffers));
-	UINT const d3d11_vertex_buffer_offsets[] = {0};
+	UINT const d3d11_vertex_buffer_offsets[] = {0, 0};
 	static_assert(std::size(d3d11_vertex_buffer_offsets) == std::size(d3d11_vertex_buffers));
 	g_app_state->m_d3d11_immediate_context->IASetVertexBuffers(start_slot, num_buffers, d3d11_vertex_buffers, d3d11_vertex_buffer_strides, d3d11_vertex_buffer_offsets);
 
-	static constexpr int const s_index_pattern[] =
+	static constexpr std::uint16_t const s_cube_index_pattern[] =
 	{
 		// front
 		0, 1, 3,
@@ -609,34 +651,26 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 		1, 6, 2,
 		2, 6, 5,
 	};
+	static_assert(std::size(s_cube_index_pattern) == s_indices_per_cube);
 
 	ID3D11Buffer* d3d11_vlp_index_buffer;
 	D3D11_BUFFER_DESC d3d11_vlp_index_buffer_description;
-	d3d11_vlp_index_buffer_description.ByteWidth = s_indices_per_cube * s_points_count * sizeof(std::uint32_t);
+	d3d11_vlp_index_buffer_description.ByteWidth = s_indices_per_cube * sizeof(std::uint16_t);
 	d3d11_vlp_index_buffer_description.Usage = D3D11_USAGE_IMMUTABLE;
 	d3d11_vlp_index_buffer_description.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	d3d11_vlp_index_buffer_description.CPUAccessFlags = 0;
 	d3d11_vlp_index_buffer_description.MiscFlags = 0;
 	d3d11_vlp_index_buffer_description.StructureByteStride = 0;
 	D3D11_SUBRESOURCE_DATA d3d11_vlp_index_buffer_resource_data;
-	std::uint32_t* vlp_index_buffer_src_data = new std::uint32_t[s_indices_per_cube * s_points_count];
-	for(int idx_point = 0; idx_point != s_points_count; ++idx_point)
-	{
-		for(int idx_indice = 0; idx_indice != s_indices_per_cube; ++idx_indice)
-		{
-			vlp_index_buffer_src_data[idx_point * s_indices_per_cube + idx_indice] = idx_point * s_vertices_per_cube + s_index_pattern[idx_indice];
-		}
-	}
-	d3d11_vlp_index_buffer_resource_data.pSysMem = vlp_index_buffer_src_data;
+	d3d11_vlp_index_buffer_resource_data.pSysMem = s_cube_index_pattern;
 	d3d11_vlp_index_buffer_resource_data.SysMemPitch = 0;
 	d3d11_vlp_index_buffer_resource_data.SysMemSlicePitch = 0;
 	HRESULT const d3d11_vlp_index_buffer_created = g_app_state->m_d3d11_device->CreateBuffer(&d3d11_vlp_index_buffer_description, &d3d11_vlp_index_buffer_resource_data, &d3d11_vlp_index_buffer);
 	CHECK_RET(d3d11_vlp_index_buffer_created == S_OK, false);
 	g_app_state->m_d3d11_vlp_index_buffer = d3d11_vlp_index_buffer;
 	auto const d3d11_vlp_index_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_vlp_index_buffer->Release(); g_app_state->m_d3d11_vlp_index_buffer = nullptr; });
-	delete[] vlp_index_buffer_src_data;
 
-	g_app_state->m_d3d11_immediate_context->IASetIndexBuffer(g_app_state->m_d3d11_vlp_index_buffer, DXGI_FORMAT_R32_UINT, 0);
+	g_app_state->m_d3d11_immediate_context->IASetIndexBuffer(g_app_state->m_d3d11_vlp_index_buffer, DXGI_FORMAT_R16_UINT, 0);
 
 	g_app_state->m_d3d11_immediate_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -1008,11 +1042,11 @@ bool render()
 		{
 			assert(frame->m_count != 0);
 			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
-			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
+			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
 			CHECK_RET_V(mapped == S_OK);
-			std::memcpy(d3d11_mapped_sub_resource.pData, frame->m_vertices, sizeof(my_vertex_t) * s_vertices_per_cube * frame->m_count);
-			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_vertex_buffer, 0);
-			g_app_state->m_d3d11_immediate_context->DrawIndexed(36 * frame->m_count, 0, 0);
+			std::memcpy(d3d11_mapped_sub_resource.pData, frame->m_vertices, sizeof(float3_t) * frame->m_count);
+			g_app_state->m_d3d11_immediate_context->Unmap(g_app_state->m_d3d11_vlp_instance_buffer, 0);
+			g_app_state->m_d3d11_immediate_context->DrawIndexedInstanced(s_indices_per_cube, frame->m_count, 0, 0, 0);
 			g_app_state->m_frames_counter.count();
 		}
 	}while(false);
@@ -1178,18 +1212,9 @@ void frames_thread_proc()
 			for(int i = 0; i != new_count; ++i)
 			{
 				auto const& ip = incomming_point2[i];
-				my_vertex_t const center{float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)}};
-				for(int j = 0; j != s_vertices_per_cube; ++j)
-				{
-					static constexpr float const xx[] = {-1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f, +1.0f};
-					static constexpr float const yy[] = {+1.0f, -1.0f, -1.0f, +1.0f, +1.0f, -1.0f, -1.0f, +1.0f};
-					static constexpr float const zz[] = {+1.0f, +1.0f, +1.0f, +1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
-					my_vertex_t& p = frame->m_vertices[i * s_vertices_per_cube + j];
-					p = center;
-					p.m_position.m_x += xx[j] * 0.005f;
-					p.m_position.m_y += yy[j] * 0.005f;
-					p.m_position.m_z += zz[j] * 0.005f;
-				}
+				float3_t const position = float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)};
+				float3_t& p = frame->m_vertices[i];
+				p = position;
 			}
 			frame->m_count = new_count;
 		}while(false);
