@@ -183,6 +183,9 @@ struct app_state_t
 	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_azimuths;
 	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
+	float3_t m_camera_position;
+	float3_t m_camera_focus;
+	float3_t m_camera_up;
 	bool m_move_forward;
 	bool m_move_backward;
 	bool m_move_left;
@@ -700,14 +703,15 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	g_app_state->m_world = XMMatrixIdentity();
 
-	XMVECTOR const d3d11_eye = {0.0f, 1.0f, -5.0f, 0.0f};
-	XMVECTOR const d3d11_at = {0.0f, 1.0f, 0.0f, 0.0f};
-	XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
+	g_app_state->m_camera_position = float3_t{0.0f, 1.0f, -5.0f};
+	g_app_state->m_camera_focus = float3_t{0.0f, 1.0f, -4.0f};
+	g_app_state->m_camera_up = float3_t{0.0f, 1.0f, 0.0f};
+	XMVECTOR const d3d11_eye = {g_app_state->m_camera_position.m_x, g_app_state->m_camera_position.m_y, g_app_state->m_camera_position.m_z, 0.0f};
+	XMVECTOR const d3d11_at = {g_app_state->m_camera_focus.m_x, g_app_state->m_camera_focus.m_y, g_app_state->m_camera_focus.m_z, 0.0f};
+	XMVECTOR const d3d11_up = {g_app_state->m_camera_up.m_x, g_app_state->m_camera_up.m_y, g_app_state->m_camera_up.m_z, 0.0f};
 	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
 	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
-
-	g_app_state->m_world = XMMatrixIdentity();
 
 	my_constant_buffer_t my_constant_buffer;
 	my_constant_buffer.m_world = XMMatrixTranspose(g_app_state->m_world);
@@ -923,10 +927,13 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			if(std::find(std::cbegin(s_rotate_roll_right), std::cend(s_rotate_roll_right), w_param) != std::cend(s_rotate_roll_right)) app_state.m_rotate_roll_right = is_pressed;
 			if(is_pressed && std::find(std::cbegin(s_reset), std::cend(s_reset), w_param) != std::cend(s_reset))
 			{
-				XMVECTOR const d3d11_eye = {0.0f, 1.0f, -5.0f, 0.0f};
-				XMVECTOR const d3d11_at = {0.0f, 1.0f, 0.0f, 0.0f};
-				XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
-				app_state.m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
+				g_app_state->m_camera_position = float3_t{0.0f, 1.0f, -5.0f};
+				g_app_state->m_camera_focus = float3_t{0.0f, 1.0f, -4.0f};
+				g_app_state->m_camera_up = float3_t{0.0f, 1.0f, 0.0f};
+				XMVECTOR const d3d11_eye = {g_app_state->m_camera_position.m_x, g_app_state->m_camera_position.m_y, g_app_state->m_camera_position.m_z, 0.0f};
+				XMVECTOR const d3d11_at = {g_app_state->m_camera_focus.m_x, g_app_state->m_camera_focus.m_y, g_app_state->m_camera_focus.m_z, 0.0f};
+				XMVECTOR const d3d11_up = {g_app_state->m_camera_up.m_x, g_app_state->m_camera_up.m_y, g_app_state->m_camera_up.m_z, 0.0f};
+				g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 			}
 		}
 		break;
@@ -1040,6 +1047,19 @@ std::u8string utf16_to_utf8(std::u16string const& u16str)
 	return u8str;
 }
 
+void rotate(XMVECTOR const& axis, float const& angle)
+{
+	static constexpr auto const fn_to_xmm_vector = [](float3_t const& val) -> XMVECTOR { return {val.m_x, val.m_y, val.m_z, 0.0f}; };
+	static constexpr auto const fn_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
+
+	XMVECTOR look_at_target = fn_to_xmm_vector(g_app_state->m_camera_focus) - fn_to_xmm_vector(g_app_state->m_camera_position);
+	XMVECTOR look_at_up = fn_to_xmm_vector(g_app_state->m_camera_up) - fn_to_xmm_vector(g_app_state->m_camera_position);
+	look_at_target = XMVector3Transform(look_at_target, XMMatrixRotationAxis(axis, angle));
+	look_at_up = XMVector3Transform(look_at_up, XMMatrixRotationAxis(axis, angle));
+	g_app_state->m_camera_focus = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_target);
+	g_app_state->m_camera_up = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_up);
+}
+
 bool render()
 {
 	static constexpr float const s_speed = 0.001f;
@@ -1058,25 +1078,30 @@ bool render()
 
 	float const move_speed = diff_float_ms / 100.0f;
 	float const rotate_speed = diff_float_ms / 500.0f;
-	app_state_t& app_state = *g_app_state;
-	if(app_state.m_move_forward) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, 0.0f, -move_speed), app_state.m_view);
-	if(app_state.m_move_backward) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, 0.0f, +move_speed), app_state.m_view);
-	if(app_state.m_move_left) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(+move_speed, 0.0f, 0.0f), app_state.m_view);
-	if(app_state.m_move_right) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(-move_speed, 0.0f, 0.0f), app_state.m_view);
-	if(app_state.m_move_up) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, -move_speed, 0.0f), app_state.m_view);
-	if(app_state.m_move_down) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, +move_speed, 0.0f), app_state.m_view);
-	if(app_state.m_rotate_yaw_left) app_state.m_view = XMMatrixMultiply(XMMatrixRotationY(-rotate_speed), app_state.m_view);
-	if(app_state.m_rotate_yaw_right) app_state.m_view = XMMatrixMultiply(XMMatrixRotationY(+rotate_speed), app_state.m_view);
-	if(app_state.m_rotate_pitch_up) app_state.m_view = XMMatrixMultiply(XMMatrixRotationX(-rotate_speed), app_state.m_view);
-	if(app_state.m_rotate_pitch_down) app_state.m_view = XMMatrixMultiply(XMMatrixRotationX(+rotate_speed), app_state.m_view);
-	if(app_state.m_rotate_roll_left) app_state.m_view = XMMatrixMultiply(XMMatrixRotationZ(+rotate_speed), app_state.m_view);
-	if(app_state.m_rotate_roll_right) app_state.m_view = XMMatrixMultiply(XMMatrixRotationZ(-rotate_speed), app_state.m_view);
+
+	if(g_app_state->m_move_forward){ g_app_state->m_camera_position.m_z += move_speed; g_app_state->m_camera_focus.m_z += move_speed; }
+	if(g_app_state->m_move_backward){ g_app_state->m_camera_position.m_z -= move_speed; g_app_state->m_camera_focus.m_z -= move_speed; }
+	if(g_app_state->m_move_left){ g_app_state->m_camera_position.m_x -= move_speed; g_app_state->m_camera_focus.m_x -= move_speed; }
+	if(g_app_state->m_move_right){ g_app_state->m_camera_position.m_x += move_speed; g_app_state->m_camera_focus.m_x += move_speed; }
+	if(g_app_state->m_move_up){ g_app_state->m_camera_position.m_y += move_speed; g_app_state->m_camera_focus.m_y += move_speed; }
+	if(g_app_state->m_move_down){ g_app_state->m_camera_position.m_y -= move_speed; g_app_state->m_camera_focus.m_y -= move_speed; }
+	if(g_app_state->m_rotate_yaw_left) rotate(XMVECTOR{0.0f, 1.0f, 0.0f, 0.0f}, -rotate_speed);
+	if(g_app_state->m_rotate_yaw_right) rotate(XMVECTOR{0.0f, 1.0f, 0.0f, 0.0f}, +rotate_speed);
+	if(g_app_state->m_rotate_pitch_up) rotate(XMVECTOR{1.0f, 0.0f, 0.0f, 0.0f}, -rotate_speed);
+	if(g_app_state->m_rotate_pitch_down) rotate(XMVECTOR{1.0f, 0.0f, 0.0f, 0.0f}, +rotate_speed);
+	if(g_app_state->m_rotate_roll_left) rotate(XMVECTOR{0.0f, 0.0f, 1.0f, 0.0f}, -rotate_speed);
+	if(g_app_state->m_rotate_roll_right) rotate(XMVECTOR{0.0f, 0.0f, 1.0f, 0.0f}, +rotate_speed);
+
+	XMVECTOR const d3d11_eye = {g_app_state->m_camera_position.m_x, g_app_state->m_camera_position.m_y, g_app_state->m_camera_position.m_z, 0.0f};
+	XMVECTOR const d3d11_at = {g_app_state->m_camera_focus.m_x, g_app_state->m_camera_focus.m_y, g_app_state->m_camera_focus.m_z, 0.0f};
+	XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
+	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
 	my_constant_buffer_t my_constant_buffer;
-	my_constant_buffer.m_world = XMMatrixTranspose(app_state.m_world);
-	my_constant_buffer.m_view = XMMatrixTranspose(app_state.m_view);
-	my_constant_buffer.m_projection = XMMatrixTranspose(app_state.m_projection);
-	g_app_state->m_d3d11_immediate_context->UpdateSubresource(app_state.m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer, 0, 0);
+	my_constant_buffer.m_world = XMMatrixTranspose(g_app_state->m_world);
+	my_constant_buffer.m_view = XMMatrixTranspose(g_app_state->m_view);
+	my_constant_buffer.m_projection = XMMatrixTranspose(g_app_state->m_projection);
+	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer, 0, 0);
 	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
 
 	static constexpr float const s_background_color[4] = {0.0f, 0.125f, 0.6f, 1.0f};
