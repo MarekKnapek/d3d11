@@ -169,7 +169,6 @@ struct app_state_t
 	ID3D11Buffer* m_d3d11_constant_buffer;
 	float m_time;
 	XMMATRIX m_world;
-	XMMATRIX m_world_2;
 	XMMATRIX m_view;
 	XMMATRIX m_projection;
 	std::chrono::high_resolution_clock::time_point m_prev_time;
@@ -184,6 +183,18 @@ struct app_state_t
 	mk::ring_buffer_spsc_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
 	mk::ring_buffer_spsc_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
+	bool m_move_forward;
+	bool m_move_backward;
+	bool m_move_left;
+	bool m_move_right;
+	bool m_move_up;
+	bool m_move_down;
+	bool m_rotate_yaw_left;
+	bool m_rotate_yaw_right;
+	bool m_rotate_pitch_up;
+	bool m_rotate_pitch_down;
+	bool m_rotate_roll_left;
+	bool m_rotate_roll_right;
 };
 
 
@@ -691,8 +702,6 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	g_app_state->m_world = XMMatrixIdentity();
 
-	g_app_state->m_world_2 = XMMatrixIdentity();
-
 	XMVECTOR const d3d11_eye = {0.0f, 1.0f, -5.0f, 0.0f};
 	XMVECTOR const d3d11_at = {0.0f, 1.0f, 0.0f, 0.0f};
 	XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
@@ -701,11 +710,12 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 
 	g_app_state->m_world = XMMatrixIdentity();
-	my_constant_buffer_t my_constant_buffer_3;
-	my_constant_buffer_3.m_world = XMMatrixTranspose(g_app_state->m_world);
-	my_constant_buffer_3.m_view = XMMatrixTranspose(g_app_state->m_view);
-	my_constant_buffer_3.m_projection = XMMatrixTranspose(g_app_state->m_projection);
-	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer_3, 0, 0);
+
+	my_constant_buffer_t my_constant_buffer;
+	my_constant_buffer.m_world = XMMatrixTranspose(g_app_state->m_world);
+	my_constant_buffer.m_view = XMMatrixTranspose(g_app_state->m_view);
+	my_constant_buffer.m_projection = XMMatrixTranspose(g_app_state->m_projection);
+	g_app_state->m_d3d11_immediate_context->UpdateSubresource(g_app_state->m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer, 0, 0);
 
 	g_app_state->m_d3d11_immediate_context->VSSetShader(g_app_state->m_d3d11_vertex_shader, nullptr, 0);
 	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
@@ -876,6 +886,45 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			CHECK_RET_V(rendered);
 		}
 		break;
+		case WM_KEYDOWN:
+		case WM_KEYUP:
+		{
+			bool const is_pressed = msg == WM_KEYDOWN;
+			static constexpr WPARAM const s_move_forward[] = {'W'};
+			static constexpr WPARAM const s_move_backward[] = {'S'};
+			static constexpr WPARAM const s_move_left[] = {'A'};
+			static constexpr WPARAM const s_move_right[] = {'D'};
+			static constexpr WPARAM const s_move_up[] = {'E'};
+			static constexpr WPARAM const s_move_down[] = {'Q'};
+			static constexpr WPARAM const s_rotate_yaw_left[] = {'J'};
+			static constexpr WPARAM const s_rotate_yaw_right[] = {'L'};
+			static constexpr WPARAM const s_rotate_pitch_up[] = {'I'};
+			static constexpr WPARAM const s_rotate_pitch_down[] = {'K'};
+			static constexpr WPARAM const s_rotate_roll_left[] = {'U'};
+			static constexpr WPARAM const s_rotate_roll_right[] = {'O'};
+			static constexpr WPARAM const s_reset[] = {'R'};
+			app_state_t& app_state = *g_app_state;
+			if(std::find(std::cbegin(s_move_forward), std::cend(s_move_forward), w_param) != std::cend(s_move_forward)) app_state.m_move_forward = is_pressed;
+			if(std::find(std::cbegin(s_move_backward), std::cend(s_move_backward), w_param) != std::cend(s_move_backward)) app_state.m_move_backward = is_pressed;
+			if(std::find(std::cbegin(s_move_left), std::cend(s_move_left), w_param) != std::cend(s_move_left)) app_state.m_move_left = is_pressed;
+			if(std::find(std::cbegin(s_move_right), std::cend(s_move_right), w_param) != std::cend(s_move_right)) app_state.m_move_right = is_pressed;
+			if(std::find(std::cbegin(s_move_up), std::cend(s_move_up), w_param) != std::cend(s_move_up)) app_state.m_move_up = is_pressed;
+			if(std::find(std::cbegin(s_move_down), std::cend(s_move_down), w_param) != std::cend(s_move_down)) app_state.m_move_down = is_pressed;
+			if(std::find(std::cbegin(s_rotate_yaw_left), std::cend(s_rotate_yaw_left), w_param) != std::cend(s_rotate_yaw_left)) app_state.m_rotate_yaw_left = is_pressed;
+			if(std::find(std::cbegin(s_rotate_yaw_right), std::cend(s_rotate_yaw_right), w_param) != std::cend(s_rotate_yaw_right)) app_state.m_rotate_yaw_right = is_pressed;
+			if(std::find(std::cbegin(s_rotate_pitch_up), std::cend(s_rotate_pitch_up), w_param) != std::cend(s_rotate_pitch_up)) app_state.m_rotate_pitch_up = is_pressed;
+			if(std::find(std::cbegin(s_rotate_pitch_down), std::cend(s_rotate_pitch_down), w_param) != std::cend(s_rotate_pitch_down)) app_state.m_rotate_pitch_down = is_pressed;
+			if(std::find(std::cbegin(s_rotate_roll_left), std::cend(s_rotate_roll_left), w_param) != std::cend(s_rotate_roll_left)) app_state.m_rotate_roll_left = is_pressed;
+			if(std::find(std::cbegin(s_rotate_roll_right), std::cend(s_rotate_roll_right), w_param) != std::cend(s_rotate_roll_right)) app_state.m_rotate_roll_right = is_pressed;
+			if(is_pressed && std::find(std::cbegin(s_reset), std::cend(s_reset), w_param) != std::cend(s_reset))
+			{
+				XMVECTOR const d3d11_eye = {0.0f, 1.0f, -5.0f, 0.0f};
+				XMVECTOR const d3d11_at = {0.0f, 1.0f, 0.0f, 0.0f};
+				XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
+				app_state.m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
+			}
+		}
+		break;
 	}
 	LRESULT const ret = DefWindowProcW(hwnd, msg, w_param, l_param);
 	return ret;
@@ -1001,6 +1050,29 @@ bool render()
 	{
 		g_app_state->m_time -= s_two_pi;
 	}
+
+	float const move_speed = diff_float_ms / 100.0f;
+	float const rotate_speed = diff_float_ms / 500.0f;
+	app_state_t& app_state = *g_app_state;
+	if(app_state.m_move_forward) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, 0.0f, -move_speed), app_state.m_view);
+	if(app_state.m_move_backward) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, 0.0f, +move_speed), app_state.m_view);
+	if(app_state.m_move_left) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(+move_speed, 0.0f, 0.0f), app_state.m_view);
+	if(app_state.m_move_right) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(-move_speed, 0.0f, 0.0f), app_state.m_view);
+	if(app_state.m_move_up) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, -move_speed, 0.0f), app_state.m_view);
+	if(app_state.m_move_down) app_state.m_view = XMMatrixMultiply(XMMatrixTranslation(0.0f, +move_speed, 0.0f), app_state.m_view);
+	if(app_state.m_rotate_yaw_left) app_state.m_view = XMMatrixMultiply(XMMatrixRotationY(-rotate_speed), app_state.m_view);
+	if(app_state.m_rotate_yaw_right) app_state.m_view = XMMatrixMultiply(XMMatrixRotationY(+rotate_speed), app_state.m_view);
+	if(app_state.m_rotate_pitch_up) app_state.m_view = XMMatrixMultiply(XMMatrixRotationX(-rotate_speed), app_state.m_view);
+	if(app_state.m_rotate_pitch_down) app_state.m_view = XMMatrixMultiply(XMMatrixRotationX(+rotate_speed), app_state.m_view);
+	if(app_state.m_rotate_roll_left) app_state.m_view = XMMatrixMultiply(XMMatrixRotationZ(+rotate_speed), app_state.m_view);
+	if(app_state.m_rotate_roll_right) app_state.m_view = XMMatrixMultiply(XMMatrixRotationZ(-rotate_speed), app_state.m_view);
+
+	my_constant_buffer_t my_constant_buffer;
+	my_constant_buffer.m_world = XMMatrixTranspose(app_state.m_world);
+	my_constant_buffer.m_view = XMMatrixTranspose(app_state.m_view);
+	my_constant_buffer.m_projection = XMMatrixTranspose(app_state.m_projection);
+	g_app_state->m_d3d11_immediate_context->UpdateSubresource(app_state.m_d3d11_constant_buffer, 0, nullptr, &my_constant_buffer, 0, 0);
+	g_app_state->m_d3d11_immediate_context->VSSetConstantBuffers(0, 1, &g_app_state->m_d3d11_constant_buffer);
 
 	static constexpr float const s_background_color[4] = {0.0f, 0.125f, 0.6f, 1.0f};
 	g_app_state->m_d3d11_immediate_context->ClearRenderTargetView(g_app_state->m_d3d11_render_target_view, s_background_color);
