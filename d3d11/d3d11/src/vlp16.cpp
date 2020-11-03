@@ -66,7 +66,7 @@ bool mk::vlp16::verify_single_mode_packet(single_mode_packet_t const& packet)
 	return ok;
 }
 
-void mk::vlp16::convert_to_xyza(std::uint16_t const& previous_block_azimuth, single_mode_packet_t const& packet, accept_point_fn_t const& accept_point_fn, void* const& ctx)
+void mk::vlp16::convert_to_xyza(single_mode_packet_t const& packet, accept_point_fn_t const& accept_point_fn, void* const& ctx)
 {
 	static constexpr double const s_vertical_angle_cos[] =
 	{
@@ -135,26 +135,28 @@ void mk::vlp16::convert_to_xyza(std::uint16_t const& previous_block_azimuth, sin
 	for(int data_block_idx = 0; data_block_idx != s_data_blocks_count; ++data_block_idx)
 	{
 		auto const& data_block = packet.m_data_blocks[data_block_idx];
-		std::uint16_t const previous_azimuth = data_block_idx == 0 ? previous_block_azimuth : packet.m_data_blocks[data_block_idx - 1].m_azimuth;
-		bool const azimuth_wrap = data_block.m_azimuth <= previous_azimuth;
-		std::uint16_t const azimuth_diff = !azimuth_wrap ? data_block.m_azimuth - previous_azimuth : data_block.m_azimuth - previous_azimuth + 360 * 100;
-		double const ad = static_cast<double>(azimuth_diff / 100.0); // azimuth diff in degrees
-		double const azimuth_deg = static_cast<double>(data_block.m_azimuth) / 100.0; // block azimuth in degrees
+		bool const last_block = data_block_idx == s_data_blocks_count - 1;
+		std::uint16_t const azimuth_a_uint = !last_block ? packet.m_data_blocks[data_block_idx + 0].m_azimuth : packet.m_data_blocks[data_block_idx - 1].m_azimuth;
+		std::uint16_t const azimuth_b_uint = !last_block ? packet.m_data_blocks[data_block_idx + 1].m_azimuth : packet.m_data_blocks[data_block_idx + 0].m_azimuth;
+		bool const azimuth_wrap = azimuth_b_uint <= azimuth_a_uint;
+		std::uint16_t const azimuth_diff_uint = !azimuth_wrap ? (azimuth_b_uint - azimuth_a_uint) : (360 * 100 - azimuth_a_uint + azimuth_b_uint);
+		double const azimuth_diff_deg = static_cast<double>(azimuth_diff_uint) / 100.0;
+		double const azimuth_deg = static_cast<double>(data_block.m_azimuth) / 100.0;
 		for(int firing_sequence_idx = 0; firing_sequence_idx != s_firing_sequences_count; ++firing_sequence_idx)
 		{
 			auto const& firing_sequence = data_block.m_firing_sequence[firing_sequence_idx];
 			for(int channel_data_idx = 0; channel_data_idx != s_channels_count; ++channel_data_idx)
 			{
 				double const r = static_cast<double>(firing_sequence.m_distance[channel_data_idx] * 2) / 1'000.0; // distance in 2 milimeters -> distance in meters
-				double const ac = ad * (((firing_sequence_idx == 0 ? 0.0 : s_firing_sequence_len_us) + channel_data_idx * s_firing_delay_us) / (static_cast<double>(s_firing_sequences_count) * s_firing_sequence_len_us)); // azimuth correction in degrees
-				double const pa_deg_tmp = azimuth_deg + ac;
-				double const pa_deg = pa_deg_tmp >= 360.0 ? (pa_deg_tmp - 360.0) : pa_deg_tmp;
-				double const pa = deg_to_rad(pa_deg); // precision azimuth in radians
+				double const azimuth_correction_deg = azimuth_diff_deg * (((firing_sequence_idx == 0 ? 0.0 : s_firing_sequence_len_us) + channel_data_idx * s_firing_delay_us) / (static_cast<double>(s_firing_sequences_count) * s_firing_sequence_len_us));
+				double const azimuth_precise_tmp_deg = azimuth_deg + azimuth_correction_deg;
+				double const azimuth_precise_deg = azimuth_precise_tmp_deg >= 360.0 ? (azimuth_precise_tmp_deg - 360.0) : azimuth_precise_tmp_deg; // precision azimuth in degrees
+				double const azimuth_precise_rad = deg_to_rad(azimuth_precise_deg); // precision azimuth in radians
 				double const tmp = r * s_vertical_angle_cos[channel_data_idx];
-				double const x = tmp * std::sin(pa); // x in meters
-				double const y = tmp * std::cos(pa); // y in meters
+				double const x = tmp * std::sin(azimuth_precise_rad); // x in meters
+				double const y = tmp * std::cos(azimuth_precise_rad); // y in meters
 				double const z = r * s_vertical_angle_sin[channel_data_idx] + s_vertical_correction_m[channel_data_idx]; // z in meters
-				accept_point_fn(x, y, z, pa_deg, ctx);
+				accept_point_fn(x, y, z, azimuth_precise_deg, ctx);
 			}
 		}
 	}

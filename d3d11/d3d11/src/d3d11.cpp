@@ -179,7 +179,6 @@ struct app_state_t
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
-	std::uint16_t m_previous_block_azimuth;
 	mk::ring_buffer_spsc_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
 	mk::ring_buffer_spsc_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
@@ -1111,9 +1110,8 @@ bool render()
 			swap(frame, g_app_state->m_last_frame);
 			std::printf("Could not compute frame in time for next present!\n");
 		}
-		if(frame)
+		if(frame && frame->m_count != 0)
 		{
-			assert(frame->m_count != 0);
 			D3D11_MAPPED_SUBRESOURCE d3d11_mapped_sub_resource;
 			HRESULT const mapped = g_app_state->m_d3d11_immediate_context->Map(g_app_state->m_d3d11_vlp_instance_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &d3d11_mapped_sub_resource);
 			CHECK_RET_V(mapped == S_OK);
@@ -1132,8 +1130,6 @@ bool render()
 
 void network_thread_proc()
 {
-	g_app_state->m_previous_block_azimuth = 0;
-
 	WORD const wsa_version = MAKEWORD(2, 2);
 	WSADATA wsa_data;
 	int const wsa_started = WSAStartup(wsa_version, &wsa_data);
@@ -1202,8 +1198,7 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	CHECK_RET(data_len == mk::vlp16::s_packet_size);
 	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
 	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
-	mk::vlp16::convert_to_xyza(g_app_state->m_previous_block_azimuth, packet, s_accept_point, g_app_state);
-	g_app_state->m_previous_block_azimuth = packet.m_data_blocks[mk::vlp16::s_data_blocks_count - 1].m_azimuth;
+	mk::vlp16::convert_to_xyza(packet, s_accept_point, g_app_state);
 
 	#pragma pop_macro("CHECK_RET")
 }
@@ -1236,14 +1231,7 @@ void frames_thread_proc()
 		auto const return_frame = mk::make_scope_exit([&]()
 		{
 			std::lock_guard<std::mutex> const lck{g_frames.m_mtx};
-			if(frame->m_count != 0)
-			{
-				g_frames.m_ready_frames.push(std::move(frame));
-			}
-			else
-			{
-				g_frames.m_empty_frames.push(std::move(frame));
-			}
+			g_frames.m_ready_frames.push(std::move(frame));
 		});
 
 		do

@@ -49,7 +49,7 @@ namespace mk
 
 		single_mode_packet_t raw_data_to_single_mode_packet(void const* const& data, int const& len);
 		bool verify_single_mode_packet(single_mode_packet_t const& packet);
-		void convert_to_xyza(std::uint16_t const& previous_block_azimuth, single_mode_packet_t const& packet, accept_point_fn_t const& accept_point_fn, void* const& ctx);
+		void convert_to_xyza(single_mode_packet_t const& packet, accept_point_fn_t const& accept_point_fn, void* const& ctx);
 
 
 	}
