@@ -176,7 +176,7 @@ struct app_state_t
 	ID3D11Buffer* m_d3d11_vlp_vertex_buffer;
 	ID3D11Buffer* m_d3d11_vlp_instance_buffer;
 	ID3D11Buffer* m_d3d11_vlp_index_buffer;
-	std::atomic<bool> m_thread_end_requested;
+	std::atomic<bool> m_network_thread_stop_requested;
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
 	std::atomic<int> m_incomming_stuff_count;
@@ -733,12 +733,19 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	});
 	/* D3D11 */
 
-	g_app_state->m_thread_end_requested.store(false);
+	g_app_state->m_network_thread_stop_requested.store(false);
 	std::thread network_thread{&network_thread_proc};
 	auto const network_thread_free = mk::make_scope_exit([&]()
 	{
-		g_app_state->m_thread_end_requested.store(true);
+		g_app_state->m_network_thread_stop_requested.store(true);
 		network_thread.join();
+	});
+
+	auto const request_to_stop_threads = mk::make_scope_exit([&]()
+	{
+		g_app_state->m_network_thread_stop_requested.store(true);
+		g_frames.m_stop_requested.store(true);
+		g_frames.m_cv.notify_one();
 	});
 
 	g_app_state->m_prev_time = std::chrono::high_resolution_clock::now();
@@ -1154,7 +1161,7 @@ void network_thread_proc()
 	int const bound = bind(sck, reinterpret_cast<sockaddr const*>(&addr), static_cast<int>(sizeof(addr)));
 	CHECK_RET_V(bound == 0);
 
-	while(g_app_state->m_thread_end_requested.load() == false)
+	while(g_app_state->m_network_thread_stop_requested.load() == false)
 	{
 		unsigned char buff[64 * 1024];
 		int const flags = 0;
