@@ -179,6 +179,7 @@ struct app_state_t
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
+	std::atomic<int> m_incomming_stuff_count;
 	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
 	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
@@ -366,8 +367,6 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 			CHECK_RET(false, false);
 		}
 	}
-
-	//std::fill(std::begin(g_app_state->m_incomming_points), std::begin(g_app_state->m_incomming_points), incomming_point_t{});
 
 	HRESULT const com_initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
 	CHECK_RET(com_initialized == S_OK, false);
@@ -1188,17 +1187,23 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	static constexpr auto const s_accept_point = [](double const& x, double const& y, double const& z, double const& a, void* const& ctx)
 	{
 		app_state_t& app_state = *static_cast<app_state_t*>(ctx);
-		if(!app_state.m_incomming_azimuths.is_full() && !app_state.m_incomming_points.is_full())
-		{
-			app_state.m_incomming_azimuths.push(a);
-			app_state.m_incomming_points.push(incomming_point_t{x, y, z});
-		}
+		assert(!app_state.m_incomming_azimuths.is_full());
+		assert(!app_state.m_incomming_points.is_full());
+		app_state.m_incomming_azimuths.push(a);
+		app_state.m_incomming_points.push(incomming_point_t{x, y, z});
 	};
 
 	CHECK_RET(data_len == mk::vlp16::s_packet_size);
 	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
 	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
+	int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load();
+	if(g_app_state->m_incomming_azimuths.s_capacity_v - incomming_stuff_count < mk::vlp16::s_points_per_packet)
+	{
+		std::printf("Not enough free space in ring buffer, dropping incomming packet!\n");
+		return;
+	}
 	mk::vlp16::convert_to_xyza(packet, s_accept_point, g_app_state);
+	g_app_state->m_incomming_stuff_count.fetch_add(mk::vlp16::s_points_per_packet);
 
 	#pragma pop_macro("CHECK_RET")
 }
@@ -1237,9 +1242,10 @@ void frames_thread_proc()
 		do
 		{
 			frame->m_count = 0;
+			int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load();
 			auto& azimuths = g_app_state->m_incomming_azimuths;
-			auto& incomming_point2 = g_app_state->m_incomming_points;
-			int const n = (mk::min)(azimuths.size(), incomming_point2.size());
+			auto& incomming_points = g_app_state->m_incomming_points;
+			int const n = incomming_stuff_count;
 			if(n == 0)
 			{
 				break;
@@ -1268,11 +1274,12 @@ void frames_thread_proc()
 			}
 			int const to_pop = target_i;
 			azimuths.pop(to_pop);
-			incomming_point2.pop(to_pop);
+			incomming_points.pop(to_pop);
+			g_app_state->m_incomming_stuff_count.fetch_sub(to_pop);
 			int const new_count = n - to_pop;
 			for(int i = 0; i != new_count; ++i)
 			{
-				auto const& ip = incomming_point2[i];
+				auto const& ip = incomming_points[i];
 				float3_t const position = float3_t{static_cast<float>(ip.m_x), static_cast<float>(ip.m_y), static_cast<float>(ip.m_z)};
 				float3_t& p = frame->m_vertices[i];
 				p = position;

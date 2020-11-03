@@ -143,6 +143,12 @@ int mk::ring_buffer_t<t, capacity_v>::size() const
 }
 
 template<typename t, int capacity_v>
+int mk::ring_buffer_t<t, capacity_v>::free_space() const
+{
+	return capacity() - size();
+}
+
+template<typename t, int capacity_v>
 int mk::ring_buffer_t<t, capacity_v>::capacity() const
 {
 	return s_capacity_v;

@@ -48,6 +48,7 @@ namespace mk
 		bool is_empty() const;
 		bool is_full() const;
 		int size() const;
+		int free_space() const;
 		int capacity() const;
 		void clear();
 		t const& front() const;
