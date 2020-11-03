@@ -130,7 +130,7 @@ struct incomming_point_t
 
 #pragma warning(push)
 #pragma warning(disable:4324) // warning C4324: 'frame_t': structure was padded due to alignment specifier
-static constexpr int const s_frames_count = 4;
+static constexpr int const s_frames_count = 3;
 static constexpr int const s_vertices_per_cube = 8;
 static constexpr int const s_indices_per_cube = 2 * 3 * 6;
 struct alignas(256) frame_t
@@ -1037,6 +1037,7 @@ bool render()
 		if(!frame)
 		{
 			swap(frame, g_app_state->m_last_frame);
+			std::printf("Could not compute frame in time for next present!\n");
 		}
 		if(frame)
 		{
