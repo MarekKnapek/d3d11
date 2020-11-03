@@ -1,5 +1,7 @@
 #include "vlp16.h"
 
+#include "mk_utils.h"
+
 #include <cassert>
 #include <cstring>
 #include <iterator>
@@ -127,6 +129,7 @@ void mk::vlp16::convert_to_xyza(single_mode_packet_t const& packet, accept_point
 	};
 	static constexpr double const s_firing_sequence_len_us = 55.296; // us, including recharge time
 	static constexpr double const s_firing_delay_us = 2.304; // us
+	static constexpr std::uint16_t s_max_azimuth_diff_uint = 85; // max 20 rotations per second, max 0.8 degrees azimuth diff, use 0.85 degrees just in case
 
 	static constexpr auto const deg_to_rad = [](double const& deg) -> double { return deg * (std::numbers::pi_v<double> / 180.0); };
 	static constexpr auto const rad_to_deg = [](double const& rad) -> double { return rad * (180.0 / std::numbers::pi_v<double>); };
@@ -139,7 +142,8 @@ void mk::vlp16::convert_to_xyza(single_mode_packet_t const& packet, accept_point
 		std::uint16_t const azimuth_a_uint = !last_block ? packet.m_data_blocks[data_block_idx + 0].m_azimuth : packet.m_data_blocks[data_block_idx - 1].m_azimuth;
 		std::uint16_t const azimuth_b_uint = !last_block ? packet.m_data_blocks[data_block_idx + 1].m_azimuth : packet.m_data_blocks[data_block_idx + 0].m_azimuth;
 		bool const azimuth_wrap = azimuth_b_uint <= azimuth_a_uint;
-		std::uint16_t const azimuth_diff_uint = !azimuth_wrap ? (azimuth_b_uint - azimuth_a_uint) : (360 * 100 - azimuth_a_uint + azimuth_b_uint);
+		std::uint16_t const azimuth_diff_tmp_uint = !azimuth_wrap ? (azimuth_b_uint - azimuth_a_uint) : (360 * 100 - azimuth_a_uint + azimuth_b_uint);
+		std::uint16_t const azimuth_diff_uint = (mk::min)(s_max_azimuth_diff_uint, azimuth_diff_tmp_uint);
 		double const azimuth_diff_deg = static_cast<double>(azimuth_diff_uint) / 100.0;
 		double const azimuth_deg = static_cast<double>(data_block.m_azimuth) / 100.0;
 		for(int firing_sequence_idx = 0; firing_sequence_idx != s_firing_sequences_count; ++firing_sequence_idx)
