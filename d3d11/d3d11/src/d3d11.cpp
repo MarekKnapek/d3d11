@@ -180,8 +180,8 @@ struct app_state_t
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
 	std::atomic<int> m_incomming_stuff_count;
-	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
-	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
+	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_azimuths;
+	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
 	bool m_move_forward;
 	bool m_move_backward;

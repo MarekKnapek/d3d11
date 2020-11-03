@@ -17,6 +17,10 @@ namespace mk
 		static constexpr int const s_packets_per_second = 754;
 		static constexpr int const s_points_per_second = s_points_per_packet * s_packets_per_second;
 		static constexpr int const s_packet_size = 1206;
+		static constexpr int const s_min_rotations_per_second = 5;
+		static constexpr int const s_max_rotations_per_second = 20;
+		static constexpr int const s_min_points_per_rotation = s_points_per_second / s_max_rotations_per_second;
+		static constexpr int const s_max_points_per_rotation = s_points_per_second / s_min_rotations_per_second;
 
 		struct firing_sequence_t
 		{
