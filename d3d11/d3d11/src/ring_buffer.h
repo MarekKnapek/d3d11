@@ -64,6 +64,8 @@ namespace mk
 		t& push();
 		template<typename u>
 		t& push(u&& val);
+		template<typename u, typename v>
+		void push(u begin, v const& end);
 		void pop();
 		void pop(int const& count);
 	private:

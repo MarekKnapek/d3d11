@@ -3,7 +3,7 @@
 #include "mk_bit_utils.h"
 #include "mk_counter.h"
 #include "mk_utils.h"
-#include "ring_buffer_spsc.h"
+#include "ring_buffer.h"
 #include "vlp16.h"
 
 #include <algorithm> // std::all_of, std::fill
@@ -179,8 +179,8 @@ struct app_state_t
 	std::atomic<bool> m_thread_end_requested;
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
-	mk::ring_buffer_spsc_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
-	mk::ring_buffer_spsc_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
+	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_azimuths;
+	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
 	bool m_move_forward;
 	bool m_move_backward;

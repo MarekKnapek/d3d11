@@ -15,9 +15,6 @@
     <ClCompile Include="src\mk_counter.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\ring_buffer_spsc.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\scope_exit.h">
@@ -36,9 +33,6 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\mk_counter.h">
-      <Filter>src</Filter>
-    </ClInclude>
-    <ClInclude Include="src\ring_buffer_spsc.h">
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
@@ -72,15 +66,9 @@
     <None Include="src\ring_buffer.inl">
       <Filter>src</Filter>
     </None>
-    <None Include="src\ring_buffer_spsc.inl">
-      <Filter>src</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="src\ring_buffer.natvis">
-      <Filter>src</Filter>
-    </Natvis>
-    <Natvis Include="src\ring_buffer_spsc.natvis">
       <Filter>src</Filter>
     </Natvis>
   </ItemGroup>
