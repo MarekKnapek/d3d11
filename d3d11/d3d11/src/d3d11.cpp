@@ -1228,14 +1228,14 @@ void process_data(unsigned char const* const& data, int const& data_len)
 	CHECK_RET(data_len == mk::vlp16::s_packet_size);
 	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
 	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
-	int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load();
+	int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load(std::memory_order_acquire);
 	if(g_app_state->m_incomming_azimuths.s_capacity_v - incomming_stuff_count < mk::vlp16::s_points_per_packet)
 	{
 		std::printf("Not enough free space in ring buffer, dropping incomming packet!\n");
 		return;
 	}
 	mk::vlp16::convert_to_xyza(packet, s_accept_point, g_app_state);
-	g_app_state->m_incomming_stuff_count.fetch_add(mk::vlp16::s_points_per_packet);
+	g_app_state->m_incomming_stuff_count.fetch_add(mk::vlp16::s_points_per_packet, std::memory_order_release);
 
 	#pragma pop_macro("CHECK_RET")
 }
@@ -1274,7 +1274,7 @@ void frames_thread_proc()
 		do
 		{
 			frame->m_count = 0;
-			int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load();
+			int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load(std::memory_order_acquire);
 			auto& azimuths = g_app_state->m_incomming_azimuths;
 			auto& incomming_points = g_app_state->m_incomming_points;
 			int const n = incomming_stuff_count;
@@ -1307,7 +1307,7 @@ void frames_thread_proc()
 			int const to_pop = target_i;
 			azimuths.pop(to_pop);
 			incomming_points.pop(to_pop);
-			g_app_state->m_incomming_stuff_count.fetch_sub(to_pop);
+			g_app_state->m_incomming_stuff_count.fetch_sub(to_pop, std::memory_order_release);
 			int const new_count = n - to_pop;
 			for(int i = 0; i != new_count; ++i)
 			{
