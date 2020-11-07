@@ -134,7 +134,7 @@ void mk::vlp16::convert_to_xyza(single_mode_packet_t const& packet, accept_point
 	};
 	static constexpr double const s_firing_sequence_len_us = 55.296; // us, including recharge time
 	static constexpr double const s_firing_delay_us = 2.304; // us
-	static constexpr std::uint16_t s_max_azimuth_diff_uint = 85; // max 20 rotations per second, max 0.8 degrees azimuth diff, use 0.85 degrees just in case
+	static constexpr std::uint16_t s_max_azimuth_diff_uint = static_cast<std::uint16_t>(gcem::ceil(((360.0 * static_cast<double>(s_max_rotations_per_second)) / (static_cast<double>(s_packets_per_second) * static_cast<double>(s_data_blocks_count))) * 100.0)) + 1; // approximately 0.7957 degrees, rounded to 0.80 and add +0.01 just in case
 
 	for(int data_block_idx = 0; data_block_idx != s_data_blocks_count; ++data_block_idx)
 	{
