@@ -9,6 +9,8 @@
 #include <numbers>
 #include <cmath>
 
+#include <gcem.hpp>
+
 
 mk::vlp16::single_mode_packet_t mk::vlp16::raw_data_to_single_mode_packet(void const* const& data, int const& len)
 {
@@ -70,43 +72,46 @@ bool mk::vlp16::verify_single_mode_packet(single_mode_packet_t const& packet)
 
 void mk::vlp16::convert_to_xyza(single_mode_packet_t const& packet, accept_point_fn_t const& accept_point_fn, void* const& ctx)
 {
+	static constexpr auto const deg_to_rad = [](double const& deg) -> double { return deg * (std::numbers::pi_v<double> / 180.0); };
+	static constexpr auto const rad_to_deg = [](double const& rad) -> double { return rad * (180.0 / std::numbers::pi_v<double>); };
+
 	static constexpr double const s_vertical_angle_cos[] =
 	{
-		0x1.ee8dd4748bf15p-1 /* cos( -15 deg ) */,
-		0x1.ffec097f5af8ap-1 /* cos(  +1 deg ) */,
-		0x1.f2e0a214e870fp-1 /* cos( -13 deg ) */,
-		0x1.ff4c5ed12e61dp-1 /* cos(  +3 deg ) */,
-		0x1.f697d6938b6c2p-1 /* cos( -11 deg ) */,
-		0x1.fe0d3b41815a2p-1 /* cos(  +5 deg ) */,
-		0x1.f9b24942fe45cp-1 /* cos(  -9 deg ) */,
-		0x1.fc2f025a23e8bp-1 /* cos(  +7 deg ) */,
-		0x1.fc2f025a23e8bp-1 /* cos(  -7 deg ) */,
-		0x1.f9b24942fe45cp-1 /* cos(  +9 deg ) */,
-		0x1.fe0d3b41815a2p-1 /* cos(  -5 deg ) */,
-		0x1.f697d6938b6c2p-1 /* cos( +11 deg ) */,
-		0x1.ff4c5ed12e61dp-1 /* cos(  -3 deg ) */,
-		0x1.f2e0a214e870fp-1 /* cos( +13 deg ) */,
-		0x1.ffec097f5af8ap-1 /* cos(  -1 deg ) */,
-		0x1.ee8dd4748bf15p-1 /* cos( +15 deg ) */,
+		gcem::cos(deg_to_rad(-15.0)),
+		gcem::cos(deg_to_rad( +1.0)),
+		gcem::cos(deg_to_rad(-13.0)),
+		gcem::cos(deg_to_rad( +3.0)),
+		gcem::cos(deg_to_rad(-11.0)),
+		gcem::cos(deg_to_rad( +5.0)),
+		gcem::cos(deg_to_rad( -9.0)),
+		gcem::cos(deg_to_rad( +7.0)),
+		gcem::cos(deg_to_rad( -7.0)),
+		gcem::cos(deg_to_rad( +9.0)),
+		gcem::cos(deg_to_rad( -5.0)),
+		gcem::cos(deg_to_rad(+11.0)),
+		gcem::cos(deg_to_rad( -3.0)),
+		gcem::cos(deg_to_rad(+13.0)),
+		gcem::cos(deg_to_rad( -1.0)),
+		gcem::cos(deg_to_rad(+15.0)),
 	};
 	static constexpr double const s_vertical_angle_sin[] =
 	{
-		-0x1.0907dc1930690p-2 /* sin( -15 deg ) */,
-		+0x1.1df0b2b89dd1ep-6 /* sin(  +1 deg ) */,
-		-0x1.ccb3236cdc675p-3 /* sin( -13 deg ) */,
-		+0x1.acbc748efc90ep-5 /* sin(  +3 deg ) */,
-		-0x1.86c6ddd76624fp-3 /* sin( -11 deg ) */,
-		+0x1.64fd6b8c28102p-4 /* sin(  +5 deg ) */,
-		-0x1.4060b67a85375p-3 /* sin(  -9 deg ) */,
-		+0x1.f32d44c4f62d3p-4 /* sin(  +7 deg ) */,
-		-0x1.f32d44c4f62d3p-4 /* sin(  -7 deg ) */,
-		+0x1.4060b67a85375p-3 /* sin(  +9 deg ) */,
-		-0x1.64fd6b8c28102p-4 /* sin(  -5 deg ) */,
-		+0x1.86c6ddd76624fp-3 /* sin( +11 deg ) */,
-		-0x1.acbc748efc90ep-5 /* sin(  -3 deg ) */,
-		+0x1.ccb3236cdc675p-3 /* sin( +13 deg ) */,
-		-0x1.1df0b2b89dd1ep-6 /* sin(  -1 deg ) */,
-		+0x1.0907dc1930690p-2 /* sin( +15 deg ) */,
+		gcem::sin(deg_to_rad(-15.0)),
+		gcem::sin(deg_to_rad( +1.0)),
+		gcem::sin(deg_to_rad(-13.0)),
+		gcem::sin(deg_to_rad( +3.0)),
+		gcem::sin(deg_to_rad(-11.0)),
+		gcem::sin(deg_to_rad( +5.0)),
+		gcem::sin(deg_to_rad( -9.0)),
+		gcem::sin(deg_to_rad( +7.0)),
+		gcem::sin(deg_to_rad( -7.0)),
+		gcem::sin(deg_to_rad( +9.0)),
+		gcem::sin(deg_to_rad( -5.0)),
+		gcem::sin(deg_to_rad(+11.0)),
+		gcem::sin(deg_to_rad( -3.0)),
+		gcem::sin(deg_to_rad(+13.0)),
+		gcem::sin(deg_to_rad( -1.0)),
+		gcem::sin(deg_to_rad(+15.0)),
 	};
 	static constexpr double const s_vertical_correction_m[] =
 	{
@@ -130,10 +135,6 @@ void mk::vlp16::convert_to_xyza(single_mode_packet_t const& packet, accept_point
 	static constexpr double const s_firing_sequence_len_us = 55.296; // us, including recharge time
 	static constexpr double const s_firing_delay_us = 2.304; // us
 	static constexpr std::uint16_t s_max_azimuth_diff_uint = 85; // max 20 rotations per second, max 0.8 degrees azimuth diff, use 0.85 degrees just in case
-
-	static constexpr auto const deg_to_rad = [](double const& deg) -> double { return deg * (std::numbers::pi_v<double> / 180.0); };
-	static constexpr auto const rad_to_deg = [](double const& rad) -> double { return rad * (180.0 / std::numbers::pi_v<double>); };
-
 
 	for(int data_block_idx = 0; data_block_idx != s_data_blocks_count; ++data_block_idx)
 	{
