@@ -31,12 +31,14 @@
 #include <windows.h>
 #include <objbase.h>
 #include <dxgi.h>
+#include <directxmath.h>
 #pragma warning(push)
 #pragma warning(disable:4005) // Macro redefinition.
 #include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\d3dx11core.h"
 #pragma warning(pop)
 #pragma warning(push)
 #pragma warning(disable:4838) // Narowwing conversion.
+#pragma warning(disable:4005) // Macro redefinition.
 #include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\xnamath.h"
 #pragma warning(pop)
 #include <winsock2.h>
@@ -184,14 +186,19 @@ struct app_state_t
 	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
 	float3_t m_camera_position;
-	float3_t m_camera_focus;
-	float3_t m_camera_up;
-	bool m_move_forward;
-	bool m_move_backward;
-	bool m_move_left;
-	bool m_move_right;
-	bool m_move_up;
-	bool m_move_down;
+	float3_t m_camera_rotation;
+	bool m_move_abs_forward;
+	bool m_move_abs_backward;
+	bool m_move_abs_left;
+	bool m_move_abs_right;
+	bool m_move_abs_up;
+	bool m_move_abs_down;
+	bool m_move_dir_forward;
+	bool m_move_dir_backward;
+	bool m_move_dir_left;
+	bool m_move_dir_right;
+	bool m_move_dir_up;
+	bool m_move_dir_down;
 	bool m_rotate_yaw_left;
 	bool m_rotate_yaw_right;
 	bool m_rotate_pitch_up;
@@ -703,13 +710,8 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 
 	g_app_state->m_world = XMMatrixIdentity();
 
-	g_app_state->m_camera_position = float3_t{0.0f, 1.0f, -5.0f};
-	g_app_state->m_camera_focus = float3_t{0.0f, 1.0f, -4.0f};
-	g_app_state->m_camera_up = float3_t{0.0f, 1.0f, 0.0f};
-	XMVECTOR const d3d11_eye = {g_app_state->m_camera_position.m_x, g_app_state->m_camera_position.m_y, g_app_state->m_camera_position.m_z, 0.0f};
-	XMVECTOR const d3d11_at = {g_app_state->m_camera_focus.m_x, g_app_state->m_camera_focus.m_y, g_app_state->m_camera_focus.m_z, 0.0f};
-	XMVECTOR const d3d11_up = {g_app_state->m_camera_up.m_x, g_app_state->m_camera_up.m_y, g_app_state->m_camera_up.m_z, 0.0f};
-	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
+	g_app_state->m_camera_position = float3_t{0.0f, 0.0f, 0.0f};
+	g_app_state->m_camera_rotation = float3_t{0.0f, 0.0f, 0.0f};
 
 	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 
@@ -899,26 +901,38 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 		case WM_KEYUP:
 		{
 			bool const is_pressed = msg == WM_KEYDOWN;
-			static constexpr WPARAM const s_move_forward[] = {'W'};
-			static constexpr WPARAM const s_move_backward[] = {'S'};
-			static constexpr WPARAM const s_move_left[] = {'A'};
-			static constexpr WPARAM const s_move_right[] = {'D'};
-			static constexpr WPARAM const s_move_up[] = {'E'};
-			static constexpr WPARAM const s_move_down[] = {'Q'};
+			static constexpr WPARAM const s_move_abs_forward[] = {'W'};
+			static constexpr WPARAM const s_move_abs_backward[] = {'S'};
+			static constexpr WPARAM const s_move_abs_left[] = {'A'};
+			static constexpr WPARAM const s_move_abs_right[] = {'D'};
+			static constexpr WPARAM const s_move_abs_up[] = {'Q'};
+			static constexpr WPARAM const s_move_abs_down[] = {'E'};
+			static constexpr WPARAM const s_move_dir_forward[] = {'T'};
+			static constexpr WPARAM const s_move_dir_backward[] = {'G'};
+			static constexpr WPARAM const s_move_dir_left[] = {'F'};
+			static constexpr WPARAM const s_move_dir_right[] = {'H'};
+			static constexpr WPARAM const s_move_dir_up[] = {'R'};
+			static constexpr WPARAM const s_move_dir_down[] = {'Z'};
 			static constexpr WPARAM const s_rotate_yaw_left[] = {'J'};
 			static constexpr WPARAM const s_rotate_yaw_right[] = {'L'};
 			static constexpr WPARAM const s_rotate_pitch_up[] = {'I'};
 			static constexpr WPARAM const s_rotate_pitch_down[] = {'K'};
 			static constexpr WPARAM const s_rotate_roll_left[] = {'U'};
 			static constexpr WPARAM const s_rotate_roll_right[] = {'O'};
-			static constexpr WPARAM const s_reset[] = {'R'};
+			static constexpr WPARAM const s_reset[] = {VK_SPACE};
 			app_state_t& app_state = *g_app_state;
-			if(std::find(std::cbegin(s_move_forward), std::cend(s_move_forward), w_param) != std::cend(s_move_forward)) app_state.m_move_forward = is_pressed;
-			if(std::find(std::cbegin(s_move_backward), std::cend(s_move_backward), w_param) != std::cend(s_move_backward)) app_state.m_move_backward = is_pressed;
-			if(std::find(std::cbegin(s_move_left), std::cend(s_move_left), w_param) != std::cend(s_move_left)) app_state.m_move_left = is_pressed;
-			if(std::find(std::cbegin(s_move_right), std::cend(s_move_right), w_param) != std::cend(s_move_right)) app_state.m_move_right = is_pressed;
-			if(std::find(std::cbegin(s_move_up), std::cend(s_move_up), w_param) != std::cend(s_move_up)) app_state.m_move_up = is_pressed;
-			if(std::find(std::cbegin(s_move_down), std::cend(s_move_down), w_param) != std::cend(s_move_down)) app_state.m_move_down = is_pressed;
+			if(std::find(std::cbegin(s_move_abs_forward), std::cend(s_move_abs_forward), w_param) != std::cend(s_move_abs_forward)) app_state.m_move_abs_forward = is_pressed;
+			if(std::find(std::cbegin(s_move_abs_backward), std::cend(s_move_abs_backward), w_param) != std::cend(s_move_abs_backward)) app_state.m_move_abs_backward = is_pressed;
+			if(std::find(std::cbegin(s_move_abs_left), std::cend(s_move_abs_left), w_param) != std::cend(s_move_abs_left)) app_state.m_move_abs_left = is_pressed;
+			if(std::find(std::cbegin(s_move_abs_right), std::cend(s_move_abs_right), w_param) != std::cend(s_move_abs_right)) app_state.m_move_abs_right = is_pressed;
+			if(std::find(std::cbegin(s_move_abs_up), std::cend(s_move_abs_up), w_param) != std::cend(s_move_abs_up)) app_state.m_move_abs_up = is_pressed;
+			if(std::find(std::cbegin(s_move_abs_down), std::cend(s_move_abs_down), w_param) != std::cend(s_move_abs_down)) app_state.m_move_abs_down = is_pressed;
+			if(std::find(std::cbegin(s_move_dir_forward), std::cend(s_move_dir_forward), w_param) != std::cend(s_move_dir_forward)) app_state.m_move_dir_forward = is_pressed;
+			if(std::find(std::cbegin(s_move_dir_backward), std::cend(s_move_dir_backward), w_param) != std::cend(s_move_dir_backward)) app_state.m_move_dir_backward = is_pressed;
+			if(std::find(std::cbegin(s_move_dir_left), std::cend(s_move_dir_left), w_param) != std::cend(s_move_dir_left)) app_state.m_move_dir_left = is_pressed;
+			if(std::find(std::cbegin(s_move_dir_right), std::cend(s_move_dir_right), w_param) != std::cend(s_move_dir_right)) app_state.m_move_dir_right = is_pressed;
+			if(std::find(std::cbegin(s_move_dir_up), std::cend(s_move_dir_up), w_param) != std::cend(s_move_dir_up)) app_state.m_move_dir_up = is_pressed;
+			if(std::find(std::cbegin(s_move_dir_down), std::cend(s_move_dir_down), w_param) != std::cend(s_move_dir_down)) app_state.m_move_dir_down = is_pressed;
 			if(std::find(std::cbegin(s_rotate_yaw_left), std::cend(s_rotate_yaw_left), w_param) != std::cend(s_rotate_yaw_left)) app_state.m_rotate_yaw_left = is_pressed;
 			if(std::find(std::cbegin(s_rotate_yaw_right), std::cend(s_rotate_yaw_right), w_param) != std::cend(s_rotate_yaw_right)) app_state.m_rotate_yaw_right = is_pressed;
 			if(std::find(std::cbegin(s_rotate_pitch_up), std::cend(s_rotate_pitch_up), w_param) != std::cend(s_rotate_pitch_up)) app_state.m_rotate_pitch_up = is_pressed;
@@ -927,13 +941,8 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			if(std::find(std::cbegin(s_rotate_roll_right), std::cend(s_rotate_roll_right), w_param) != std::cend(s_rotate_roll_right)) app_state.m_rotate_roll_right = is_pressed;
 			if(is_pressed && std::find(std::cbegin(s_reset), std::cend(s_reset), w_param) != std::cend(s_reset))
 			{
-				g_app_state->m_camera_position = float3_t{0.0f, 1.0f, -5.0f};
-				g_app_state->m_camera_focus = float3_t{0.0f, 1.0f, -4.0f};
-				g_app_state->m_camera_up = float3_t{0.0f, 1.0f, 0.0f};
-				XMVECTOR const d3d11_eye = {g_app_state->m_camera_position.m_x, g_app_state->m_camera_position.m_y, g_app_state->m_camera_position.m_z, 0.0f};
-				XMVECTOR const d3d11_at = {g_app_state->m_camera_focus.m_x, g_app_state->m_camera_focus.m_y, g_app_state->m_camera_focus.m_z, 0.0f};
-				XMVECTOR const d3d11_up = {g_app_state->m_camera_up.m_x, g_app_state->m_camera_up.m_y, g_app_state->m_camera_up.m_z, 0.0f};
-				g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
+				g_app_state->m_camera_position = float3_t{0.0f, 0.0f, 0.0f};
+				g_app_state->m_camera_rotation = float3_t{0.0f, 0.0f, 0.0f};
 			}
 		}
 		break;
@@ -1047,23 +1056,86 @@ std::u8string utf16_to_utf8(std::u16string const& u16str)
 	return u8str;
 }
 
-void rotate(XMVECTOR const& axis, float const& angle)
+XMMATRIX rotate(float3_t const& angles)
 {
-	static constexpr auto const fn_to_xmm_vector = [](float3_t const& val) -> XMVECTOR { return {val.m_x, val.m_y, val.m_z, 0.0f}; };
-	static constexpr auto const fn_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
+	XMMATRIX const rot_x = XMMatrixRotationX(angles.m_x);
+	XMMATRIX const rot_y = XMMatrixRotationY(angles.m_y);
+	XMMATRIX const rot_z = XMMatrixRotationZ(angles.m_z);
+	return XMMatrixIdentity() * rot_x * rot_y * rot_z;
 
-	XMVECTOR look_at_target = fn_to_xmm_vector(g_app_state->m_camera_focus) - fn_to_xmm_vector(g_app_state->m_camera_position);
-	XMVECTOR look_at_up = fn_to_xmm_vector(g_app_state->m_camera_up) - fn_to_xmm_vector(g_app_state->m_camera_position);
-	look_at_target = XMVector3Transform(look_at_target, XMMatrixRotationAxis(axis, angle));
-	look_at_up = XMVector3Transform(look_at_up, XMMatrixRotationAxis(axis, angle));
-	g_app_state->m_camera_focus = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_target);
-	g_app_state->m_camera_up = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_up);
+	//XMVECTOR look_at_target = fn_to_xmm_vector(g_app_state->m_camera_focus) - fn_to_xmm_vector(g_app_state->m_camera_position);
+	//XMVECTOR look_at_up = fn_to_xmm_vector(g_app_state->m_camera_up) - fn_to_xmm_vector(g_app_state->m_camera_position);
+	//look_at_target = XMVector3Transform(look_at_target, XMMatrixRotationAxis(axis, angle));
+	//look_at_up = XMVector3Transform(look_at_up, XMMatrixRotationAxis(axis, angle));
+	//g_app_state->m_camera_focus = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_target);
+	//g_app_state->m_camera_up = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_up);
+}
+
+//#include "c:/Users/me/Downloads/dx/dx9/Include/D3DX10math.h"
+//#include <array>
+//#ifdef _M_IX86
+//	#ifdef NDEBUG
+//		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\D3DX10.lib")
+//	#else
+//		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\D3DX10d.lib")
+//	#endif
+//#else
+//	#ifdef _M_X64
+//		#ifdef NDEBUG
+//			#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\D3DX10.lib")
+//		#else
+//			#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\D3DX10d.lib")
+//		#endif
+//	#else
+//		#error Unknown architecture.
+//	#endif
+//#endif
+XMMATRIX yaw_pitch_roll_matrix(float const& yaw, float const& pitch, float const& roll)
+{
+	// order of transformations: 1st roll, 2nd pitch, 3rd yaw
+	// order of transformations: 1st z, 2nd x, 3rd y
+	float const cy = std::cos(yaw);
+	float const sy = std::sin(yaw);
+	float const cp = std::cos(pitch);
+	float const sp = std::sin(pitch);
+	float const cr = std::cos(roll);
+	float const sr = std::sin(roll);
+	XMMATRIX m;
+	m._11 = cy * cr + sy * sp * sr;
+	m._12 = cp * sr;
+	m._13 = cy * sp * sr - sy * cr;
+	m._14 = 0.0f;
+	m._21 = sy * sp * cr - cy * sr;
+	m._22 = cp * cr;
+	m._23 = sy * sr + cy * sp * cr;
+	m._24 = 0.0f;
+	m._31 = sy * cp;
+	m._32 = -sp;
+	m._33 = cy * cp;
+	m._34 = 0.0f;
+	m._41 = 0.0f;
+	m._42 = 0.0f;
+	m._43 = 0.0f;
+	m._44 = 1.0f;
+
+	//D3DXMATRIX out;
+	//D3DXMatrixRotationYawPitchRoll(&out, yaw, pitch, roll);
+	//using my_type = std::array<float, 4 * 4>;
+	//my_type const& a = *reinterpret_cast<my_type*>(&m);
+	//my_type const& b = *reinterpret_cast<my_type*>(&out);
+	//for(int i = 0; i != 4 * 4; ++i)
+	//{
+	//	assert(a[i] - b[i] < 1.0e-6);
+	//}
+
+	return m;
 }
 
 bool render()
 {
 	static constexpr float const s_speed = 0.001f;
 	static constexpr float const s_two_pi = 2.0f * std::numbers::pi_v<float>;
+	static constexpr float const s_pi_half = std::numbers::pi_v<float> / 2.0f;
 
 	auto const now = std::chrono::high_resolution_clock::now();
 	auto const diff = now - g_app_state->m_prev_time;
@@ -1079,22 +1151,94 @@ bool render()
 	float const move_speed = diff_float_ms / 100.0f;
 	float const rotate_speed = diff_float_ms / 500.0f;
 
-	if(g_app_state->m_move_forward){ g_app_state->m_camera_position.m_z += move_speed; g_app_state->m_camera_focus.m_z += move_speed; }
-	if(g_app_state->m_move_backward){ g_app_state->m_camera_position.m_z -= move_speed; g_app_state->m_camera_focus.m_z -= move_speed; }
-	if(g_app_state->m_move_left){ g_app_state->m_camera_position.m_x -= move_speed; g_app_state->m_camera_focus.m_x -= move_speed; }
-	if(g_app_state->m_move_right){ g_app_state->m_camera_position.m_x += move_speed; g_app_state->m_camera_focus.m_x += move_speed; }
-	if(g_app_state->m_move_up){ g_app_state->m_camera_position.m_y += move_speed; g_app_state->m_camera_focus.m_y += move_speed; }
-	if(g_app_state->m_move_down){ g_app_state->m_camera_position.m_y -= move_speed; g_app_state->m_camera_focus.m_y -= move_speed; }
-	if(g_app_state->m_rotate_yaw_left) rotate(XMVECTOR{0.0f, 1.0f, 0.0f, 0.0f}, -rotate_speed);
-	if(g_app_state->m_rotate_yaw_right) rotate(XMVECTOR{0.0f, 1.0f, 0.0f, 0.0f}, +rotate_speed);
-	if(g_app_state->m_rotate_pitch_up) rotate(XMVECTOR{1.0f, 0.0f, 0.0f, 0.0f}, -rotate_speed);
-	if(g_app_state->m_rotate_pitch_down) rotate(XMVECTOR{1.0f, 0.0f, 0.0f, 0.0f}, +rotate_speed);
-	if(g_app_state->m_rotate_roll_left) rotate(XMVECTOR{0.0f, 0.0f, 1.0f, 0.0f}, -rotate_speed);
-	if(g_app_state->m_rotate_roll_right) rotate(XMVECTOR{0.0f, 0.0f, 1.0f, 0.0f}, +rotate_speed);
+	if(g_app_state->m_move_abs_forward){ g_app_state->m_camera_position.m_z += move_speed; }
+	if(g_app_state->m_move_abs_backward){ g_app_state->m_camera_position.m_z -= move_speed; }
+	if(g_app_state->m_move_abs_left){ g_app_state->m_camera_position.m_x -= move_speed; }
+	if(g_app_state->m_move_abs_right){ g_app_state->m_camera_position.m_x += move_speed; }
+	if(g_app_state->m_move_abs_up){ g_app_state->m_camera_position.m_y += move_speed; }
+	if(g_app_state->m_move_abs_down){ g_app_state->m_camera_position.m_y -= move_speed; }
 
-	XMVECTOR const d3d11_eye = {g_app_state->m_camera_position.m_x, g_app_state->m_camera_position.m_y, g_app_state->m_camera_position.m_z, 0.0f};
-	XMVECTOR const d3d11_at = {g_app_state->m_camera_focus.m_x, g_app_state->m_camera_focus.m_y, g_app_state->m_camera_focus.m_z, 0.0f};
-	XMVECTOR const d3d11_up = {0.0f, 1.0f, 0.0f, 0.0f};
+	if(g_app_state->m_move_dir_forward)
+	{
+		g_app_state->m_camera_position.m_z += std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
+		g_app_state->m_camera_position.m_x += std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
+		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_rotation.m_x) * move_speed;
+	}
+	if(g_app_state->m_move_dir_backward)
+	{
+		g_app_state->m_camera_position.m_z -= std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
+		g_app_state->m_camera_position.m_x -= std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
+		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_rotation.m_x) * move_speed;
+	}
+	if(g_app_state->m_move_dir_left)
+	{
+		g_app_state->m_camera_position.m_x -= std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
+		g_app_state->m_camera_position.m_z += std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
+		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_rotation.m_z) * move_speed;
+	}
+	if(g_app_state->m_move_dir_right)
+	{
+		g_app_state->m_camera_position.m_x += std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
+		g_app_state->m_camera_position.m_z -= std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
+		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_rotation.m_z) * move_speed;
+	}
+
+	if(g_app_state->m_rotate_yaw_left)
+	{
+	}
+	if(g_app_state->m_rotate_yaw_right)
+	{
+	}
+	if(g_app_state->m_rotate_pitch_up)
+	{
+		g_app_state->m_camera_rotation.m_x -= rotate_speed * std::cos(g_app_state->m_camera_rotation.m_z);
+		g_app_state->m_camera_rotation.m_y -= rotate_speed * std::sin(g_app_state->m_camera_rotation.m_z);
+		if(g_app_state->m_camera_rotation.m_x < 0.0f)
+		{
+			g_app_state->m_camera_rotation.m_x += s_two_pi;
+		}
+		if(g_app_state->m_camera_rotation.m_y < 0.0f)
+		{
+			g_app_state->m_camera_rotation.m_y += s_two_pi;
+		}
+	}
+	if(g_app_state->m_rotate_pitch_down)
+	{
+		g_app_state->m_camera_rotation.m_x += rotate_speed * std::cos(g_app_state->m_camera_rotation.m_z);
+		g_app_state->m_camera_rotation.m_y += rotate_speed * std::sin(g_app_state->m_camera_rotation.m_z);
+		if(g_app_state->m_camera_rotation.m_x >= s_two_pi)
+		{
+			g_app_state->m_camera_rotation.m_x -= s_two_pi;
+		}
+		if(g_app_state->m_camera_rotation.m_y >= s_two_pi)
+		{
+			g_app_state->m_camera_rotation.m_y -= s_two_pi;
+		}
+	}
+	if(g_app_state->m_rotate_roll_left)
+	{
+		g_app_state->m_camera_rotation.m_z += rotate_speed;
+		if(g_app_state->m_camera_rotation.m_z >= s_two_pi)
+		{
+			g_app_state->m_camera_rotation.m_z -= s_two_pi;
+		}
+	}
+	if(g_app_state->m_rotate_roll_right)
+	{
+		g_app_state->m_camera_rotation.m_z -= rotate_speed;
+		if(g_app_state->m_camera_rotation.m_z < 0.0f)
+		{
+			g_app_state->m_camera_rotation.m_z += s_two_pi;
+		}
+	}
+
+	static constexpr auto const fn_to_xmm_vector = [](float3_t const& val) -> XMVECTOR { return {val.m_x, val.m_y, val.m_z, 0.0f}; };
+	static constexpr auto const fn_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
+
+	XMMATRIX const rotation = yaw_pitch_roll_matrix(g_app_state->m_camera_rotation.m_y, g_app_state->m_camera_rotation.m_x, g_app_state->m_camera_rotation.m_z);
+	XMVECTOR const d3d11_eye = fn_to_xmm_vector(g_app_state->m_camera_position);
+	XMVECTOR const d3d11_at = XMVector4Transform(fn_to_xmm_vector(float3_t{0.0f, 0.0f, 1.0f}), rotation) + d3d11_eye;
+	XMVECTOR const d3d11_up = XMVector4Transform(fn_to_xmm_vector(float3_t{0.0f, 1.0f, 0.0f}), rotation);
 	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
 	my_constant_buffer_t my_constant_buffer;
@@ -1222,7 +1366,7 @@ void process_data(unsigned char const* const& data, int const& data_len)
 		assert(!app_state.m_incomming_azimuths.is_full());
 		assert(!app_state.m_incomming_points.is_full());
 		app_state.m_incomming_azimuths.push(a);
-		app_state.m_incomming_points.push(incomming_point_t{x, y, z});
+		app_state.m_incomming_points.push(incomming_point_t{x, z, y});
 	};
 
 	CHECK_RET(data_len == mk::vlp16::s_packet_size);
