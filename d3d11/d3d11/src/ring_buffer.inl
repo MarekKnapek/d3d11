@@ -53,8 +53,8 @@ mk::ring_buffer_t<t, capacity_v>::ring_buffer_t(ring_buffer_t const& other) :
 	ring_buffer_t()
 {
 	auto const first_part = other.first_continuous_part();
-	push(begin(first_part), end(first_part));
 	auto const second_part = other.second_continuous_part();
+	push(begin(first_part), end(first_part));
 	push(begin(second_part), end(second_part));
 }
 
@@ -63,8 +63,8 @@ mk::ring_buffer_t<t, capacity_v>::ring_buffer_t(ring_buffer_t&& other) noexcept 
 	ring_buffer_t()
 {
 	auto first_part = other.first_continuous_part();
-	push(mk::detail::make_move_iterator(begin(first_part)), mk::detail::make_move_iterator(end(first_part)));
 	auto second_part = other.second_continuous_part();
+	push(mk::detail::make_move_iterator(begin(first_part)), mk::detail::make_move_iterator(end(first_part)));
 	push(mk::detail::make_move_iterator(begin(second_part)), mk::detail::make_move_iterator(end(second_part)));
 	other.clear();
 }
@@ -119,7 +119,7 @@ void mk::ring_buffer_t<t, capacity_v>::swap(ring_buffer_t& other) noexcept
 }
 
 template<typename t, int capacity_v>
-mk::ring_buffer_t<t, capacity_v>::~ring_buffer_t()
+mk::ring_buffer_t<t, capacity_v>::~ring_buffer_t() noexcept
 {
 	clear();
 }
@@ -196,16 +196,16 @@ template<typename t, int capacity_v>
 t const& mk::ring_buffer_t<t, capacity_v>::operator[](int const& idx) const
 {
 	assert(idx < size());
-	t const& ref = internal_get(m_read_idx + idx);
-	return ref;
+	t const* const ptr = internal_get(m_read_idx + idx);
+	return *ptr;
 }
 
 template<typename t, int capacity_v>
 t& mk::ring_buffer_t<t, capacity_v>::operator[](int const& idx)
 {
 	assert(idx < size());
-	t& ref = internal_get(m_read_idx + idx);
-	return ref;
+	t* const ptr = internal_get(m_read_idx + idx);
+	return *ptr;
 }
 
 template<typename t, int capacity_v>
@@ -213,8 +213,8 @@ mk::ring_buffer_const_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::fir
 {
 	unsigned const read_idx = m_read_idx;
 	bool const is_split = (read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
-	t const* const begin = &internal_get(read_idx + 0);
-	t const* const end = &internal_get(read_idx + size());
+	t const* const begin = internal_get(read_idx + 0);
+	t const* const end = internal_get(read_idx + size());
 	t const* const array_end = reinterpret_cast<t const*>(m_arr[0].m_buff) + s_capacity_v;
 	t const* const first_end = is_split ? array_end : end;
 	return mk::ring_buffer_const_continuous_part_t<t>{begin, first_end};
@@ -225,8 +225,8 @@ mk::ring_buffer_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::first_con
 {
 	unsigned const read_idx = m_read_idx;
 	bool const is_split = (read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
-	t* const begin = &internal_get(read_idx + 0);
-	t* const end = &internal_get(read_idx + size());
+	t* const begin = internal_get(read_idx + 0);
+	t* const end = internal_get(read_idx + size());
 	t* const array_end = reinterpret_cast<t*>(m_arr[0].m_buff) + s_capacity_v;
 	t* const first_end = is_split ? array_end : end;
 	return mk::ring_buffer_continuous_part_t<t>{begin, first_end};
@@ -237,7 +237,7 @@ mk::ring_buffer_const_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::sec
 {
 	unsigned const read_idx = m_read_idx;
 	bool const is_split = (read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
-	t const* const end = &internal_get(read_idx + size());
+	t const* const end = internal_get(read_idx + size());
 	t const* const array_begin = reinterpret_cast<t const*>(m_arr[0].m_buff) + 0;
 	t const* const second_begin = is_split ? array_begin : end;
 	return mk::ring_buffer_const_continuous_part_t<t>{second_begin, end};
@@ -248,7 +248,7 @@ mk::ring_buffer_continuous_part_t<t> mk::ring_buffer_t<t, capacity_v>::second_co
 {
 	unsigned const read_idx = m_read_idx;
 	bool const is_split = (read_idx &~ (static_cast<unsigned>(s_capacity_v) - 1)) != (m_write_idx &~ (static_cast<unsigned>(s_capacity_v) - 1));
-	t* const end = &internal_get(read_idx + size());
+	t* const end = internal_get(read_idx + size());
 	t* const array_begin = reinterpret_cast<t*>(m_arr[0].m_buff) + 0;
 	t* const second_begin = is_split ? array_begin : end;
 	return mk::ring_buffer_continuous_part_t<t>{second_begin, end};
@@ -283,10 +283,10 @@ t& mk::ring_buffer_t<t, capacity_v>::push(u&& val)
 {
 	assert(!is_full());
 	unsigned const write_idx = m_write_idx;
-	t& ref = internal_get(write_idx);
-	new(static_cast<void*>(&ref)) t{mk::forward<u>(val)};
+	t* const ptr = internal_get(write_idx);
+	new(static_cast<void*>(ptr)) t{mk::forward<u>(val)};
 	m_write_idx = write_idx + 1;
-	return ref;
+	return *ptr;
 }
 
 template<typename t, int capacity_v>
@@ -298,8 +298,8 @@ void mk::ring_buffer_t<t, capacity_v>::push(u begin, v const& end)
 	while(begin != end)
 	{
 		assert(!is_full());
-		t& ref = internal_get(write_idx + count);
-		new(static_cast<void*>(&ref)) t{*begin};
+		t* const ptr = internal_get(write_idx + count);
+		new(static_cast<void*>(ptr)) t{*begin};
 		++begin;
 		++count;
 	}
@@ -319,22 +319,22 @@ void mk::ring_buffer_t<t, capacity_v>::pop(int const& count)
 	unsigned const read_idx = m_read_idx;
 	for(int i = 0; i != count; ++i)
 	{
-		t& ref = internal_get(read_idx + i);
-		ref.~t();
+		t* const ptr = internal_get(read_idx + i);
+		ptr->~t();
 	}
 	m_read_idx = read_idx + count;
 }
 
 template<typename t, int capacity_v>
-t const& mk::ring_buffer_t<t, capacity_v>::internal_get(unsigned const& idx) const
+t const* mk::ring_buffer_t<t, capacity_v>::internal_get(unsigned const& idx) const
 {
-	t const& ref = *static_cast<t const*>(static_cast<void const*>(m_arr[idx & (s_capacity_v - 1)].m_buff));
+	t const* const ref = static_cast<t const*>(static_cast<void const*>(m_arr[idx & (s_capacity_v - 1)].m_buff));
 	return ref;
 }
 
 template<typename t, int capacity_v>
-t& mk::ring_buffer_t<t, capacity_v>::internal_get(unsigned const& idx)
+t* mk::ring_buffer_t<t, capacity_v>::internal_get(unsigned const& idx)
 {
-	t& ref = *static_cast<t*>(static_cast<void*>(m_arr[idx & (s_capacity_v - 1)].m_buff));
+	t* const ref = static_cast<t*>(static_cast<void*>(m_arr[idx & (s_capacity_v - 1)].m_buff));
 	return ref;
 }

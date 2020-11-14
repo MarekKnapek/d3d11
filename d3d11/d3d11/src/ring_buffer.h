@@ -14,8 +14,8 @@ namespace mk
 		t const* m_begin;
 		t const* m_end;
 	};
-	template<typename t> inline t const* begin(ring_buffer_const_continuous_part_t<t> const& val) { return val.m_begin; }
-	template<typename t> inline t const* end(ring_buffer_const_continuous_part_t<t> const& val) { return val.m_end; }
+	template<typename t> inline t const* const& begin(ring_buffer_const_continuous_part_t<t> const& val) { return val.m_begin; }
+	template<typename t> inline t const* const& end(ring_buffer_const_continuous_part_t<t> const& val) { return val.m_end; }
 
 	template<typename t>
 	struct ring_buffer_continuous_part_t
@@ -23,10 +23,10 @@ namespace mk
 		t* m_begin;
 		t* m_end;
 	};
-	template<typename t> inline t const* begin(ring_buffer_continuous_part_t<t> const& val) { return val.m_begin; }
-	template<typename t> inline t* begin(ring_buffer_continuous_part_t<t>& val) { return val.m_begin; }
-	template<typename t> inline t const* end(ring_buffer_continuous_part_t<t> const& val) { return val.m_end; }
-	template<typename t> inline t* end(ring_buffer_continuous_part_t<t>& val) { return val.m_end; }
+	template<typename t> inline t const* const& begin(ring_buffer_continuous_part_t<t> const& val) { return val.m_begin; }
+	template<typename t> inline t* const& begin(ring_buffer_continuous_part_t<t>& val) { return val.m_begin; }
+	template<typename t> inline t const* const& end(ring_buffer_continuous_part_t<t> const& val) { return val.m_end; }
+	template<typename t> inline t* const& end(ring_buffer_continuous_part_t<t>& val) { return val.m_end; }
 
 
 	template<typename t, int capacity_v>
@@ -43,7 +43,7 @@ namespace mk
 		ring_buffer_t& operator=(ring_buffer_t const& other);
 		ring_buffer_t& operator=(ring_buffer_t&& other) noexcept;
 		void swap(ring_buffer_t& other) noexcept;
-		~ring_buffer_t();
+		~ring_buffer_t() noexcept;
 	public:
 		bool is_empty() const;
 		bool is_full() const;
@@ -70,8 +70,8 @@ namespace mk
 		void pop();
 		void pop(int const& count);
 	private:
-		t const& internal_get(unsigned const& idx) const;
-		t& internal_get(unsigned const& idx);
+		t const* internal_get(unsigned const& idx) const;
+		t* internal_get(unsigned const& idx);
 	private:
 		unsigned m_read_idx;
 		unsigned m_write_idx;
