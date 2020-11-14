@@ -186,7 +186,7 @@ struct app_state_t
 	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
 	float3_t m_camera_position;
-	float3_t m_camera_rotation;
+	float3_t m_camera_direction;
 	bool m_move_abs_forward;
 	bool m_move_abs_backward;
 	bool m_move_abs_left;
@@ -711,7 +711,7 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_world = XMMatrixIdentity();
 
 	g_app_state->m_camera_position = float3_t{0.0f, 0.0f, 0.0f};
-	g_app_state->m_camera_rotation = float3_t{0.0f, 0.0f, 0.0f};
+	g_app_state->m_camera_direction = float3_t{0.0f, 0.0f, 0.0f};
 
 	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 
@@ -942,7 +942,7 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			if(is_pressed && std::find(std::cbegin(s_reset), std::cend(s_reset), w_param) != std::cend(s_reset))
 			{
 				g_app_state->m_camera_position = float3_t{0.0f, 0.0f, 0.0f};
-				g_app_state->m_camera_rotation = float3_t{0.0f, 0.0f, 0.0f};
+				g_app_state->m_camera_direction = float3_t{0.0f, 0.0f, 0.0f};
 			}
 		}
 		break;
@@ -1160,27 +1160,27 @@ bool render()
 
 	if(g_app_state->m_move_dir_forward)
 	{
-		g_app_state->m_camera_position.m_z += std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
-		g_app_state->m_camera_position.m_x += std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
-		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_rotation.m_x) * move_speed;
+		g_app_state->m_camera_position.m_z += std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
+		g_app_state->m_camera_position.m_x += std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
+		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_direction.m_x) * move_speed;
 	}
 	if(g_app_state->m_move_dir_backward)
 	{
-		g_app_state->m_camera_position.m_z -= std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
-		g_app_state->m_camera_position.m_x -= std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_x) * move_speed;
-		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_rotation.m_x) * move_speed;
+		g_app_state->m_camera_position.m_z -= std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
+		g_app_state->m_camera_position.m_x -= std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
+		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_direction.m_x) * move_speed;
 	}
 	if(g_app_state->m_move_dir_left)
 	{
-		g_app_state->m_camera_position.m_x -= std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
-		g_app_state->m_camera_position.m_z += std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
-		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_rotation.m_z) * move_speed;
+		g_app_state->m_camera_position.m_x -= std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
+		g_app_state->m_camera_position.m_z += std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
+		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_direction.m_z) * move_speed;
 	}
 	if(g_app_state->m_move_dir_right)
 	{
-		g_app_state->m_camera_position.m_x += std::cos(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
-		g_app_state->m_camera_position.m_z -= std::sin(g_app_state->m_camera_rotation.m_y) * std::cos(g_app_state->m_camera_rotation.m_z) * move_speed;
-		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_rotation.m_z) * move_speed;
+		g_app_state->m_camera_position.m_x += std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
+		g_app_state->m_camera_position.m_z -= std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
+		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_direction.m_z) * move_speed;
 	}
 
 	if(g_app_state->m_rotate_yaw_left)
@@ -1191,51 +1191,51 @@ bool render()
 	}
 	if(g_app_state->m_rotate_pitch_up)
 	{
-		g_app_state->m_camera_rotation.m_x -= rotate_speed * std::cos(g_app_state->m_camera_rotation.m_z);
-		g_app_state->m_camera_rotation.m_y -= rotate_speed * std::sin(g_app_state->m_camera_rotation.m_z);
-		if(g_app_state->m_camera_rotation.m_x < 0.0f)
+		g_app_state->m_camera_direction.m_x -= rotate_speed * std::cos(g_app_state->m_camera_direction.m_z);
+		g_app_state->m_camera_direction.m_y -= rotate_speed * std::sin(g_app_state->m_camera_direction.m_z);
+		if(g_app_state->m_camera_direction.m_x < 0.0f)
 		{
-			g_app_state->m_camera_rotation.m_x += s_two_pi;
+			g_app_state->m_camera_direction.m_x += s_two_pi;
 		}
-		if(g_app_state->m_camera_rotation.m_y < 0.0f)
+		if(g_app_state->m_camera_direction.m_y < 0.0f)
 		{
-			g_app_state->m_camera_rotation.m_y += s_two_pi;
+			g_app_state->m_camera_direction.m_y += s_two_pi;
 		}
 	}
 	if(g_app_state->m_rotate_pitch_down)
 	{
-		g_app_state->m_camera_rotation.m_x += rotate_speed * std::cos(g_app_state->m_camera_rotation.m_z);
-		g_app_state->m_camera_rotation.m_y += rotate_speed * std::sin(g_app_state->m_camera_rotation.m_z);
-		if(g_app_state->m_camera_rotation.m_x >= s_two_pi)
+		g_app_state->m_camera_direction.m_x += rotate_speed * std::cos(g_app_state->m_camera_direction.m_z);
+		g_app_state->m_camera_direction.m_y += rotate_speed * std::sin(g_app_state->m_camera_direction.m_z);
+		if(g_app_state->m_camera_direction.m_x >= s_two_pi)
 		{
-			g_app_state->m_camera_rotation.m_x -= s_two_pi;
+			g_app_state->m_camera_direction.m_x -= s_two_pi;
 		}
-		if(g_app_state->m_camera_rotation.m_y >= s_two_pi)
+		if(g_app_state->m_camera_direction.m_y >= s_two_pi)
 		{
-			g_app_state->m_camera_rotation.m_y -= s_two_pi;
+			g_app_state->m_camera_direction.m_y -= s_two_pi;
 		}
 	}
 	if(g_app_state->m_rotate_roll_left)
 	{
-		g_app_state->m_camera_rotation.m_z += rotate_speed;
-		if(g_app_state->m_camera_rotation.m_z >= s_two_pi)
+		g_app_state->m_camera_direction.m_z += rotate_speed;
+		if(g_app_state->m_camera_direction.m_z >= s_two_pi)
 		{
-			g_app_state->m_camera_rotation.m_z -= s_two_pi;
+			g_app_state->m_camera_direction.m_z -= s_two_pi;
 		}
 	}
 	if(g_app_state->m_rotate_roll_right)
 	{
-		g_app_state->m_camera_rotation.m_z -= rotate_speed;
-		if(g_app_state->m_camera_rotation.m_z < 0.0f)
+		g_app_state->m_camera_direction.m_z -= rotate_speed;
+		if(g_app_state->m_camera_direction.m_z < 0.0f)
 		{
-			g_app_state->m_camera_rotation.m_z += s_two_pi;
+			g_app_state->m_camera_direction.m_z += s_two_pi;
 		}
 	}
 
 	static constexpr auto const fn_to_xmm_vector = [](float3_t const& val) -> XMVECTOR { return {val.m_x, val.m_y, val.m_z, 0.0f}; };
 	static constexpr auto const fn_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
 
-	XMMATRIX const rotation = yaw_pitch_roll_matrix(g_app_state->m_camera_rotation.m_y, g_app_state->m_camera_rotation.m_x, g_app_state->m_camera_rotation.m_z);
+	XMMATRIX const rotation = yaw_pitch_roll_matrix(g_app_state->m_camera_direction.m_y, g_app_state->m_camera_direction.m_x, g_app_state->m_camera_direction.m_z);
 	XMVECTOR const d3d11_eye = fn_to_xmm_vector(g_app_state->m_camera_position);
 	XMVECTOR const d3d11_at = XMVector4Transform(fn_to_xmm_vector(float3_t{0.0f, 0.0f, 1.0f}), rotation) + d3d11_eye;
 	XMVECTOR const d3d11_up = XMVector4Transform(fn_to_xmm_vector(float3_t{0.0f, 1.0f, 0.0f}), rotation);
