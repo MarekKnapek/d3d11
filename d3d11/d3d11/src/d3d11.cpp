@@ -4,7 +4,7 @@
 #include "mk_counter.h"
 #include "mk_utils.h"
 #include "ring_buffer.h"
-#include "vlp16.h"
+#include "ouster64.h"
 
 #include <algorithm> // std::all_of, std::fill
 #include <atomic>
@@ -90,7 +90,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
-static constexpr int const s_points_count = mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second);
+static constexpr int const s_points_count = mk::equal_or_next_power_of_two(mk::ouster64::s_points_per_second);
 
 
 struct float3_t
@@ -182,8 +182,8 @@ struct app_state_t
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
 	std::atomic<int> m_incomming_stuff_count;
-	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_azimuths;
-	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
+	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::ouster64::s_max_points_per_rotation * 2)> m_incomming_azimuths;
+	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::ouster64::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
 	float3_t m_camera_position;
 	float3_t m_camera_direction;
@@ -1369,17 +1369,17 @@ void process_data(unsigned char const* const& data, int const& data_len)
 		app_state.m_incomming_points.push(incomming_point_t{x, z, y});
 	};
 
-	CHECK_RET(data_len == mk::vlp16::s_packet_size);
-	auto const& packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
-	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
+	CHECK_RET(data_len == mk::ouster64::s_bytes_per_packet);
+	auto const packet = mk::ouster64::raw_data_to_packet(data, data_len);
+	CHECK_RET(mk::ouster64::verify_packet(packet));
 	int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load(std::memory_order_acquire);
-	if(g_app_state->m_incomming_azimuths.s_capacity_v - incomming_stuff_count < mk::vlp16::s_points_per_packet)
+	if(g_app_state->m_incomming_azimuths.s_capacity_v - incomming_stuff_count < mk::ouster64::s_points_per_packet)
 	{
 		std::printf("Not enough free space in ring buffer, dropping incomming packet!\n");
 		return;
 	}
-	mk::vlp16::convert_to_xyza(packet, s_accept_point, g_app_state);
-	g_app_state->m_incomming_stuff_count.fetch_add(mk::vlp16::s_points_per_packet, std::memory_order_release);
+	mk::ouster64::convert_to_xyza(packet, s_accept_point, g_app_state);
+	g_app_state->m_incomming_stuff_count.fetch_add(mk::ouster64::s_points_per_packet, std::memory_order_release);
 
 	#pragma pop_macro("CHECK_RET")
 }
