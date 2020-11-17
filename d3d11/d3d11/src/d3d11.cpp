@@ -4,7 +4,7 @@
 #include "mk_counter.h"
 #include "mk_utils.h"
 #include "ring_buffer.h"
-#include "ouster64.h"
+#include "vlp16.h"
 
 #include <algorithm> // std::all_of, std::fill
 #include <atomic>
@@ -90,7 +90,7 @@
 #pragma comment(lib, "ws2_32.lib")
 
 
-static constexpr int const s_points_count = mk::equal_or_next_power_of_two(mk::ouster64::s_points_per_second);
+static constexpr int const s_points_count = mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second);
 
 
 struct float3_t
@@ -106,6 +106,70 @@ struct float4_t
 	float m_y;
 	float m_z;
 	float m_w;
+};
+
+struct double3_t
+{
+	double const& operator[](int const& idx) const { return m_data[idx]; }
+	double& operator[](int const& idx) { return m_data[idx]; }
+	double m_data[3];
+};
+
+double3_t operator*(double3_t const& a, double const& b)
+{
+	double3_t const ret =
+	{
+		a[0] * b,
+		a[1] * b,
+		a[2] * b
+	};
+	return ret;
+}
+
+double3_t operator*(double const& a, double3_t const& b)
+{
+	return b * a;
+}
+
+double3_t operator+(double3_t const& a, double3_t const& b)
+{
+	double3_t const ret =
+	{
+		a[0] + b[0],
+		a[1] + b[1],
+		a[2] + b[2]
+	};
+	return ret;
+}
+
+double3_t operator-(double3_t const& a, double3_t const& b)
+{
+	double3_t const ret =
+	{
+		a[0] - b[0],
+		a[1] - b[1],
+		a[2] - b[2]
+	};
+	return ret;
+}
+
+double3_t& operator+=(double3_t& a, double3_t const& b)
+{
+	a = a + b;
+	return a;
+}
+
+double3_t& operator-=(double3_t& a, double3_t const& b)
+{
+	a = a - b;
+	return a;
+}
+
+struct double33_t
+{
+	double3_t const& operator[](int const& idx) const { return m_rows[idx]; }
+	double3_t& operator[](int const& idx) { return m_rows[idx]; }
+	double3_t m_rows[3];
 };
 
 struct my_vertex_t
@@ -169,7 +233,6 @@ struct app_state_t
 	ID3D11VertexShader* m_d3d11_vertex_shader;
 	ID3D11PixelShader* m_d3d11_pixel_shader;
 	ID3D11Buffer* m_d3d11_constant_buffer;
-	float m_time;
 	XMMATRIX m_world;
 	XMMATRIX m_view;
 	XMMATRIX m_projection;
@@ -182,11 +245,11 @@ struct app_state_t
 	std::mutex m_points_mutex;
 	mk::counter_t m_packet_coutner;
 	std::atomic<int> m_incomming_stuff_count;
-	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::ouster64::s_max_points_per_rotation * 2)> m_incomming_azimuths;
-	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::ouster64::s_max_points_per_rotation * 2)> m_incomming_points;
+	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_azimuths;
+	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
-	float3_t m_camera_position;
-	float3_t m_camera_direction;
+	double3_t m_camera_position;
+	double33_t m_view_transform;
 	bool m_move_abs_forward;
 	bool m_move_abs_backward;
 	bool m_move_abs_left;
@@ -706,12 +769,10 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const d3d11_constant_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_constant_buffer->Release(); g_app_state->m_d3d11_constant_buffer = nullptr; });
 	g_app_state->m_d3d11_constant_buffer = d3d11_constant_buffer;
 
-	g_app_state->m_time = 0.0f;
-
 	g_app_state->m_world = XMMatrixIdentity();
 
-	g_app_state->m_camera_position = float3_t{0.0f, 0.0f, 0.0f};
-	g_app_state->m_camera_direction = float3_t{0.0f, 0.0f, 0.0f};
+	g_app_state->m_camera_position = double3_t{0.0, 0.0, 0.0};
+	g_app_state->m_view_transform = double33_t{double3_t{1.0, 0.0, 0.0}, double3_t{0.0, 1.0, 0.0}, double3_t{0.0, 0.0, 1.0}};
 
 	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 
@@ -941,8 +1002,8 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 			if(std::find(std::cbegin(s_rotate_roll_right), std::cend(s_rotate_roll_right), w_param) != std::cend(s_rotate_roll_right)) app_state.m_rotate_roll_right = is_pressed;
 			if(is_pressed && std::find(std::cbegin(s_reset), std::cend(s_reset), w_param) != std::cend(s_reset))
 			{
-				g_app_state->m_camera_position = float3_t{0.0f, 0.0f, 0.0f};
-				g_app_state->m_camera_direction = float3_t{0.0f, 0.0f, 0.0f};
+				g_app_state->m_camera_position = double3_t{0.0, 0.0, 0.0};
+				g_app_state->m_view_transform = double33_t{double3_t{1.0, 0.0, 0.0}, double3_t{0.0, 1.0, 0.0}, double3_t{0.0, 0.0, 1.0}};
 			}
 		}
 		break;
@@ -1063,12 +1124,12 @@ XMMATRIX rotate(float3_t const& angles)
 	XMMATRIX const rot_z = XMMatrixRotationZ(angles.m_z);
 	return XMMatrixIdentity() * rot_x * rot_y * rot_z;
 
-	//XMVECTOR look_at_target = fn_to_xmm_vector(g_app_state->m_camera_focus) - fn_to_xmm_vector(g_app_state->m_camera_position);
-	//XMVECTOR look_at_up = fn_to_xmm_vector(g_app_state->m_camera_up) - fn_to_xmm_vector(g_app_state->m_camera_position);
+	//XMVECTOR look_at_target = s_to_xmm_vector(g_app_state->m_camera_focus) - s_to_xmm_vector(g_app_state->m_camera_position);
+	//XMVECTOR look_at_up = s_to_xmm_vector(g_app_state->m_camera_up) - s_to_xmm_vector(g_app_state->m_camera_position);
 	//look_at_target = XMVector3Transform(look_at_target, XMMatrixRotationAxis(axis, angle));
 	//look_at_up = XMVector3Transform(look_at_up, XMMatrixRotationAxis(axis, angle));
-	//g_app_state->m_camera_focus = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_target);
-	//g_app_state->m_camera_up = fn_from_xmm_vector(fn_to_xmm_vector(g_app_state->m_camera_position) + look_at_up);
+	//g_app_state->m_camera_focus = s_from_xmm_vector(s_to_xmm_vector(g_app_state->m_camera_position) + look_at_target);
+	//g_app_state->m_camera_up = s_from_xmm_vector(s_to_xmm_vector(g_app_state->m_camera_position) + look_at_up);
 }
 
 //#include "c:/Users/me/Downloads/dx/dx9/Include/D3DX10math.h"
@@ -1131,114 +1192,204 @@ XMMATRIX yaw_pitch_roll_matrix(float const& yaw, float const& pitch, float const
 	return m;
 }
 
+double33_t yaw_pitch_roll_to_double33(double const& yaw, double const& pitch, double const& roll)
+{
+	double const& w = yaw;
+	double const& v = pitch;
+	double const& u = roll;
+	double const cw = std::cos(w);
+	double const cv = std::cos(v);
+	double const cu = std::cos(u);
+	double const sw = std::sin(w);
+	double const sv = std::sin(v);
+	double const su = std::sin(u);
+	double33_t const ret =
+	{
+		double3_t
+		{
+			cv * cw,
+			su * sv * cw - cu * sw,
+			su * sw + cu * sv * cw
+		},
+		double3_t
+		{
+			cv * sw,
+			cu * cw + su * sv * sw,
+			cu * sv * sw - su * cw
+		},
+		double3_t
+		{
+			-sv,
+			su * cv,
+			cu * cv
+		}
+	};
+	return ret;
+}
+
+double3_t rotate_double3_by_double33(double3_t const& point, double33_t const& rot)
+{
+	double3_t const ret =
+	{
+		rot[0][0] * point[0] + rot[0][1] * point[1] + rot[0][2] * point[2],
+		rot[1][0] * point[0] + rot[1][1] * point[1] + rot[1][2] * point[2],
+		rot[2][0] * point[0] + rot[2][1] * point[1] + rot[2][2] * point[2]
+	};
+	return ret;
+}
+
+double33_t multiply_double33_by_double33(double33_t const& a, double33_t const& b)
+{
+	double33_t const ret =
+	{
+		double3_t
+		{
+			a[0][0] * b[0][0] + a[1][0] * b[0][1] + a[2][0] * b[0][2],
+			a[0][1] * b[0][0] + a[1][1] * b[0][1] + a[2][1] * b[0][2],
+			a[0][2] * b[0][0] + a[1][2] * b[0][1] + a[2][2] * b[0][2]
+		},
+		double3_t
+		{
+			a[0][0] * b[1][0] + a[1][0] * b[1][1] + a[2][0] * b[1][2],
+			a[0][1] * b[1][0] + a[1][1] * b[1][1] + a[2][1] * b[1][2],
+			a[0][2] * b[1][0] + a[1][2] * b[1][1] + a[2][2] * b[1][2]
+		},
+		double3_t
+		{
+			a[0][0] * b[2][0] + a[1][0] * b[2][1] + a[2][0] * b[2][2],
+			a[0][1] * b[2][0] + a[1][1] * b[2][1] + a[2][1] * b[2][2],
+			a[0][2] * b[2][0] + a[1][2] * b[2][1] + a[2][2] * b[2][2]
+		}
+	};
+	return ret;
+}
+
+double3_t from_standard_to_d3d(double3_t const& pos)
+{
+	// standard x forward, y right, z down
+	// d3d x right, y up, z forward
+	double3_t const ret =
+	{
+		pos[1],
+		-pos[2],
+		pos[0]
+	};
+	return ret;
+}
+
+double3_t from_d3d_to_standard(double3_t const& pos)
+{
+	// standard x forward, y right, z down
+	// d3d x right, y up, z forward
+	double3_t const ret =
+	{
+		pos[2],
+		pos[0],
+		-pos[1]
+	};
+	return ret;
+}
+
 bool render()
 {
-	static constexpr float const s_speed = 0.001f;
-	static constexpr float const s_two_pi = 2.0f * std::numbers::pi_v<float>;
-	static constexpr float const s_pi_half = std::numbers::pi_v<float> / 2.0f;
+	static constexpr auto const s_deg_to_rad = [](double const& deg) -> double { double const rad = deg * (std::numbers::pi_v<double> / 180.0); return rad; };
+	static constexpr auto const s_rad_to_deg = [](double const& rad) -> double { double const deg = rad * (180.0 / std::numbers::pi_v<double>); return deg; };
+
+	static constexpr auto const s_km_per_h_to_m_per_ms = [](double const& km_per_h) -> double { double const m_per_ms = km_per_h * (1'000.0 / (60.0 * 60.0 * 1'000.0)); return m_per_ms; };
+	static constexpr auto const s_deg_per_s_to_rad_per_ms = [](double const& deg_per_s) -> double { double const rad_per_ms = s_deg_to_rad(deg_per_s / 1'000.0); return rad_per_ms; };
+
+	static constexpr double const s_move_speed_kmh = 36.0;
+	static constexpr double const s_rotate_speed_deg_per_s = 90.0;
+
+	static constexpr double const s_move_speed_m_per_ms = s_km_per_h_to_m_per_ms(s_move_speed_kmh);
+	static constexpr double const s_rotate_speed_rad_per_ms = s_deg_per_s_to_rad_per_ms(s_rotate_speed_deg_per_s);
+
+	static constexpr double const s_two_pi = 2.0 * std::numbers::pi_v<double>;
+	static constexpr double const s_pi_half = std::numbers::pi_v<double> / 2.0;
 
 	auto const now = std::chrono::high_resolution_clock::now();
 	auto const diff = now - g_app_state->m_prev_time;
-	float const diff_float_ms = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(diff).count();
 	g_app_state->m_prev_time = now;
+	double const diff_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(diff).count();
 
-	g_app_state->m_time += diff_float_ms * s_speed;
-	if(g_app_state->m_time >= s_two_pi)
-	{
-		g_app_state->m_time -= s_two_pi;
-	}
+	double const move_delta = diff_ms * s_move_speed_m_per_ms;
+	double const rotate_delta = diff_ms * s_rotate_speed_rad_per_ms;
 
-	float const move_speed = diff_float_ms / 100.0f;
-	float const rotate_speed = diff_float_ms / 500.0f;
+	if(g_app_state->m_move_abs_forward){ g_app_state->m_camera_position[2] += move_delta; }
+	if(g_app_state->m_move_abs_backward){ g_app_state->m_camera_position[2] -= move_delta; }
+	if(g_app_state->m_move_abs_left){ g_app_state->m_camera_position[0] -= move_delta; }
+	if(g_app_state->m_move_abs_right){ g_app_state->m_camera_position[0] += move_delta; }
+	if(g_app_state->m_move_abs_up){ g_app_state->m_camera_position[1] += move_delta; }
+	if(g_app_state->m_move_abs_down){ g_app_state->m_camera_position[1] -= move_delta; }
 
-	if(g_app_state->m_move_abs_forward){ g_app_state->m_camera_position.m_z += move_speed; }
-	if(g_app_state->m_move_abs_backward){ g_app_state->m_camera_position.m_z -= move_speed; }
-	if(g_app_state->m_move_abs_left){ g_app_state->m_camera_position.m_x -= move_speed; }
-	if(g_app_state->m_move_abs_right){ g_app_state->m_camera_position.m_x += move_speed; }
-	if(g_app_state->m_move_abs_up){ g_app_state->m_camera_position.m_y += move_speed; }
-	if(g_app_state->m_move_abs_down){ g_app_state->m_camera_position.m_y -= move_speed; }
+	static constexpr auto const s_default_view_forward = double3_t{0.0, 0.0, +1.0};
+	static constexpr auto const s_default_view_up = double3_t{0.0, +1.0, 0.0};
+	static constexpr auto const s_default_view_right = double3_t{+1.0, 0.0, 0.0};
 
-	if(g_app_state->m_move_dir_forward)
-	{
-		g_app_state->m_camera_position.m_z += std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
-		g_app_state->m_camera_position.m_x += std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
-		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_direction.m_x) * move_speed;
-	}
-	if(g_app_state->m_move_dir_backward)
-	{
-		g_app_state->m_camera_position.m_z -= std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
-		g_app_state->m_camera_position.m_x -= std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_x) * move_speed;
-		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_direction.m_x) * move_speed;
-	}
-	if(g_app_state->m_move_dir_left)
-	{
-		g_app_state->m_camera_position.m_x -= std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
-		g_app_state->m_camera_position.m_z += std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
-		g_app_state->m_camera_position.m_y -= std::sin(g_app_state->m_camera_direction.m_z) * move_speed;
-	}
-	if(g_app_state->m_move_dir_right)
-	{
-		g_app_state->m_camera_position.m_x += std::cos(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
-		g_app_state->m_camera_position.m_z -= std::sin(g_app_state->m_camera_direction.m_y) * std::cos(g_app_state->m_camera_direction.m_z) * move_speed;
-		g_app_state->m_camera_position.m_y += std::sin(g_app_state->m_camera_direction.m_z) * move_speed;
-	}
-
+	double yaw = 0.0; // right
+	double pitch = 0.0; // up
+	double roll = 0.0; // clockwise/right
 	if(g_app_state->m_rotate_yaw_left)
 	{
+		yaw -= rotate_delta;
 	}
 	if(g_app_state->m_rotate_yaw_right)
 	{
+		yaw += rotate_delta;
 	}
 	if(g_app_state->m_rotate_pitch_up)
 	{
-		g_app_state->m_camera_direction.m_x -= rotate_speed * std::cos(g_app_state->m_camera_direction.m_z);
-		g_app_state->m_camera_direction.m_y -= rotate_speed * std::sin(g_app_state->m_camera_direction.m_z);
-		if(g_app_state->m_camera_direction.m_x < 0.0f)
-		{
-			g_app_state->m_camera_direction.m_x += s_two_pi;
-		}
-		if(g_app_state->m_camera_direction.m_y < 0.0f)
-		{
-			g_app_state->m_camera_direction.m_y += s_two_pi;
-		}
+		pitch += rotate_delta;
 	}
 	if(g_app_state->m_rotate_pitch_down)
 	{
-		g_app_state->m_camera_direction.m_x += rotate_speed * std::cos(g_app_state->m_camera_direction.m_z);
-		g_app_state->m_camera_direction.m_y += rotate_speed * std::sin(g_app_state->m_camera_direction.m_z);
-		if(g_app_state->m_camera_direction.m_x >= s_two_pi)
-		{
-			g_app_state->m_camera_direction.m_x -= s_two_pi;
-		}
-		if(g_app_state->m_camera_direction.m_y >= s_two_pi)
-		{
-			g_app_state->m_camera_direction.m_y -= s_two_pi;
-		}
+		pitch -= rotate_delta;
 	}
 	if(g_app_state->m_rotate_roll_left)
 	{
-		g_app_state->m_camera_direction.m_z += rotate_speed;
-		if(g_app_state->m_camera_direction.m_z >= s_two_pi)
-		{
-			g_app_state->m_camera_direction.m_z -= s_two_pi;
-		}
+		roll -= rotate_delta;
 	}
 	if(g_app_state->m_rotate_roll_right)
 	{
-		g_app_state->m_camera_direction.m_z -= rotate_speed;
-		if(g_app_state->m_camera_direction.m_z < 0.0f)
-		{
-			g_app_state->m_camera_direction.m_z += s_two_pi;
-		}
+		roll += rotate_delta;
 	}
 
-	static constexpr auto const fn_to_xmm_vector = [](float3_t const& val) -> XMVECTOR { return {val.m_x, val.m_y, val.m_z, 0.0f}; };
-	static constexpr auto const fn_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
+	g_app_state->m_view_transform = multiply_double33_by_double33(yaw_pitch_roll_to_double33(yaw, pitch, roll), g_app_state->m_view_transform);
+	double3_t const view_forward = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_forward), g_app_state->m_view_transform));
+	double3_t const view_up = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_up), g_app_state->m_view_transform));
+	double3_t const view_right = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_right), g_app_state->m_view_transform));
 
-	XMMATRIX const rotation = yaw_pitch_roll_matrix(g_app_state->m_camera_direction.m_y, g_app_state->m_camera_direction.m_x, g_app_state->m_camera_direction.m_z);
-	XMVECTOR const d3d11_eye = fn_to_xmm_vector(g_app_state->m_camera_position);
-	XMVECTOR const d3d11_at = XMVector4Transform(fn_to_xmm_vector(float3_t{0.0f, 0.0f, 1.0f}), rotation) + d3d11_eye;
-	XMVECTOR const d3d11_up = XMVector4Transform(fn_to_xmm_vector(float3_t{0.0f, 1.0f, 0.0f}), rotation);
+	static constexpr auto const s_to_xmm_vector = [](double3_t const& x) -> XMVECTOR { return {static_cast<float>(x[0]), static_cast<float>(x[1]), static_cast<float>(x[2]), 0.0f}; };
+	static constexpr auto const s_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
+
+	if(g_app_state->m_move_dir_forward)
+	{
+		g_app_state->m_camera_position += view_forward * move_delta;
+	}
+	if(g_app_state->m_move_dir_backward)
+	{
+		g_app_state->m_camera_position -= view_forward * move_delta;
+	}
+	if(g_app_state->m_move_dir_left)
+	{
+		g_app_state->m_camera_position -= view_right * move_delta;
+	}
+	if(g_app_state->m_move_dir_right)
+	{
+		g_app_state->m_camera_position += view_right * move_delta;
+	}
+	if(g_app_state->m_move_dir_up)
+	{
+		g_app_state->m_camera_position += view_up * move_delta;
+	}
+	if(g_app_state->m_move_dir_down)
+	{
+		g_app_state->m_camera_position -= view_up * move_delta;
+	}
+
+	XMVECTOR const d3d11_eye = s_to_xmm_vector(g_app_state->m_camera_position);
+	XMVECTOR const d3d11_at = s_to_xmm_vector(g_app_state->m_camera_position + view_forward);
+	XMVECTOR const d3d11_up = s_to_xmm_vector(view_up);
 	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
 	my_constant_buffer_t my_constant_buffer;
@@ -1369,17 +1520,17 @@ void process_data(unsigned char const* const& data, int const& data_len)
 		app_state.m_incomming_points.push(incomming_point_t{x, z, y});
 	};
 
-	CHECK_RET(data_len == mk::ouster64::s_bytes_per_packet);
-	auto const packet = mk::ouster64::raw_data_to_packet(data, data_len);
-	CHECK_RET(mk::ouster64::verify_packet(packet));
+	CHECK_RET(data_len == mk::vlp16::s_bytes_per_packet);
+	auto const packet = mk::vlp16::raw_data_to_single_mode_packet(data, data_len);
+	CHECK_RET(mk::vlp16::verify_single_mode_packet(packet));
 	int const incomming_stuff_count = g_app_state->m_incomming_stuff_count.load(std::memory_order_acquire);
-	if(g_app_state->m_incomming_azimuths.s_capacity_v - incomming_stuff_count < mk::ouster64::s_points_per_packet)
+	if(g_app_state->m_incomming_azimuths.s_capacity_v - incomming_stuff_count < mk::vlp16::s_points_per_packet)
 	{
 		std::printf("Not enough free space in ring buffer, dropping incomming packet!\n");
 		return;
 	}
-	mk::ouster64::convert_to_xyza(packet, s_accept_point, g_app_state);
-	g_app_state->m_incomming_stuff_count.fetch_add(mk::ouster64::s_points_per_packet, std::memory_order_release);
+	mk::vlp16::convert_to_xyza(packet, s_accept_point, g_app_state);
+	g_app_state->m_incomming_stuff_count.fetch_add(mk::vlp16::s_points_per_packet, std::memory_order_release);
 
 	#pragma pop_macro("CHECK_RET")
 }

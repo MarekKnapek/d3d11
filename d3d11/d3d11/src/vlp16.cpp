@@ -22,7 +22,7 @@ mk::vlp16::single_mode_packet_t mk::vlp16::raw_data_to_single_mode_packet(void c
 		return ret;
 	};
 
-	assert(len == s_packet_size); (void)len;
+	assert(len == s_bytes_per_packet); (void)len;
 	single_mode_packet_t packet;
 	int idx = 0;
 	for(int i_data_block = 0; i_data_block != s_data_blocks_count; ++i_data_block)
@@ -41,7 +41,7 @@ mk::vlp16::single_mode_packet_t mk::vlp16::raw_data_to_single_mode_packet(void c
 	packet.m_timestamp = s_read.operator()<std::uint32_t>(data, idx);
 	packet.m_factory.m_return_mode = s_read.operator()<std::uint8_t>(data, idx);
 	packet.m_factory.m_product_id = s_read.operator()<std::uint8_t>(data, idx);
-	assert(idx == s_packet_size);
+	assert(idx == s_bytes_per_packet);
 	return packet;
 }
 
