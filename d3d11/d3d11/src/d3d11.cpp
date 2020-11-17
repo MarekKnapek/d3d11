@@ -100,14 +100,6 @@ struct float3_t
 	float m_z;
 };
 
-struct float4_t
-{
-	float m_x;
-	float m_y;
-	float m_z;
-	float m_w;
-};
-
 struct double3_t
 {
 	double const& operator[](int const& idx) const { return m_data[idx]; }
@@ -236,6 +228,8 @@ struct app_state_t
 	XMMATRIX m_world;
 	XMMATRIX m_view;
 	XMMATRIX m_projection;
+	double3_t m_camera_position;
+	double33_t m_view_transform;
 	std::chrono::high_resolution_clock::time_point m_prev_time;
 	mk::counter_t m_frames_counter;
 	ID3D11Buffer* m_d3d11_vlp_vertex_buffer;
@@ -248,8 +242,6 @@ struct app_state_t
 	mk::ring_buffer_t<double, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_azimuths;
 	mk::ring_buffer_t<incomming_point_t, mk::equal_or_next_power_of_two(mk::vlp16::s_max_points_per_rotation * 2)> m_incomming_points;
 	std::unique_ptr<frame_t> m_last_frame;
-	double3_t m_camera_position;
-	double33_t m_view_transform;
 	bool m_move_abs_forward;
 	bool m_move_abs_backward;
 	bool m_move_abs_left;
@@ -1117,81 +1109,6 @@ std::u8string utf16_to_utf8(std::u16string const& u16str)
 	return u8str;
 }
 
-XMMATRIX rotate(float3_t const& angles)
-{
-	XMMATRIX const rot_x = XMMatrixRotationX(angles.m_x);
-	XMMATRIX const rot_y = XMMatrixRotationY(angles.m_y);
-	XMMATRIX const rot_z = XMMatrixRotationZ(angles.m_z);
-	return XMMatrixIdentity() * rot_x * rot_y * rot_z;
-
-	//XMVECTOR look_at_target = s_to_xmm_vector(g_app_state->m_camera_focus) - s_to_xmm_vector(g_app_state->m_camera_position);
-	//XMVECTOR look_at_up = s_to_xmm_vector(g_app_state->m_camera_up) - s_to_xmm_vector(g_app_state->m_camera_position);
-	//look_at_target = XMVector3Transform(look_at_target, XMMatrixRotationAxis(axis, angle));
-	//look_at_up = XMVector3Transform(look_at_up, XMMatrixRotationAxis(axis, angle));
-	//g_app_state->m_camera_focus = s_from_xmm_vector(s_to_xmm_vector(g_app_state->m_camera_position) + look_at_target);
-	//g_app_state->m_camera_up = s_from_xmm_vector(s_to_xmm_vector(g_app_state->m_camera_position) + look_at_up);
-}
-
-//#include "c:/Users/me/Downloads/dx/dx9/Include/D3DX10math.h"
-//#include <array>
-//#ifdef _M_IX86
-//	#ifdef NDEBUG
-//		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\D3DX10.lib")
-//	#else
-//		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\D3DX10d.lib")
-//	#endif
-//#else
-//	#ifdef _M_X64
-//		#ifdef NDEBUG
-//			#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\D3DX10.lib")
-//		#else
-//			#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\D3DX10d.lib")
-//		#endif
-//	#else
-//		#error Unknown architecture.
-//	#endif
-//#endif
-XMMATRIX yaw_pitch_roll_matrix(float const& yaw, float const& pitch, float const& roll)
-{
-	// order of transformations: 1st roll, 2nd pitch, 3rd yaw
-	// order of transformations: 1st z, 2nd x, 3rd y
-	float const cy = std::cos(yaw);
-	float const sy = std::sin(yaw);
-	float const cp = std::cos(pitch);
-	float const sp = std::sin(pitch);
-	float const cr = std::cos(roll);
-	float const sr = std::sin(roll);
-	XMMATRIX m;
-	m._11 = cy * cr + sy * sp * sr;
-	m._12 = cp * sr;
-	m._13 = cy * sp * sr - sy * cr;
-	m._14 = 0.0f;
-	m._21 = sy * sp * cr - cy * sr;
-	m._22 = cp * cr;
-	m._23 = sy * sr + cy * sp * cr;
-	m._24 = 0.0f;
-	m._31 = sy * cp;
-	m._32 = -sp;
-	m._33 = cy * cp;
-	m._34 = 0.0f;
-	m._41 = 0.0f;
-	m._42 = 0.0f;
-	m._43 = 0.0f;
-	m._44 = 1.0f;
-
-	//D3DXMATRIX out;
-	//D3DXMatrixRotationYawPitchRoll(&out, yaw, pitch, roll);
-	//using my_type = std::array<float, 4 * 4>;
-	//my_type const& a = *reinterpret_cast<my_type*>(&m);
-	//my_type const& b = *reinterpret_cast<my_type*>(&out);
-	//for(int i = 0; i != 4 * 4; ++i)
-	//{
-	//	assert(a[i] - b[i] < 1.0e-6);
-	//}
-
-	return m;
-}
-
 double33_t yaw_pitch_roll_to_double33(double const& yaw, double const& pitch, double const& roll)
 {
 	double const& w = yaw;
@@ -1329,30 +1246,12 @@ bool render()
 	double yaw = 0.0; // right
 	double pitch = 0.0; // up
 	double roll = 0.0; // clockwise/right
-	if(g_app_state->m_rotate_yaw_left)
-	{
-		yaw -= rotate_delta;
-	}
-	if(g_app_state->m_rotate_yaw_right)
-	{
-		yaw += rotate_delta;
-	}
-	if(g_app_state->m_rotate_pitch_up)
-	{
-		pitch += rotate_delta;
-	}
-	if(g_app_state->m_rotate_pitch_down)
-	{
-		pitch -= rotate_delta;
-	}
-	if(g_app_state->m_rotate_roll_left)
-	{
-		roll -= rotate_delta;
-	}
-	if(g_app_state->m_rotate_roll_right)
-	{
-		roll += rotate_delta;
-	}
+	if(g_app_state->m_rotate_yaw_left){ yaw -= rotate_delta; }
+	if(g_app_state->m_rotate_yaw_right){ yaw += rotate_delta; }
+	if(g_app_state->m_rotate_pitch_up){ pitch += rotate_delta; }
+	if(g_app_state->m_rotate_pitch_down){ pitch -= rotate_delta; }
+	if(g_app_state->m_rotate_roll_left){ roll -= rotate_delta; }
+	if(g_app_state->m_rotate_roll_right){ roll += rotate_delta; }
 
 	g_app_state->m_view_transform = multiply_double33_by_double33(yaw_pitch_roll_to_double33(yaw, pitch, roll), g_app_state->m_view_transform);
 	double3_t const view_forward = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_forward), g_app_state->m_view_transform));
@@ -1360,32 +1259,13 @@ bool render()
 	double3_t const view_right = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_right), g_app_state->m_view_transform));
 
 	static constexpr auto const s_to_xmm_vector = [](double3_t const& x) -> XMVECTOR { return {static_cast<float>(x[0]), static_cast<float>(x[1]), static_cast<float>(x[2]), 0.0f}; };
-	static constexpr auto const s_from_xmm_vector = [](XMVECTOR const& val) -> float3_t { return {val.m128_f32[0], val.m128_f32[1], val.m128_f32[2]}; };
 
-	if(g_app_state->m_move_dir_forward)
-	{
-		g_app_state->m_camera_position += view_forward * move_delta;
-	}
-	if(g_app_state->m_move_dir_backward)
-	{
-		g_app_state->m_camera_position -= view_forward * move_delta;
-	}
-	if(g_app_state->m_move_dir_left)
-	{
-		g_app_state->m_camera_position -= view_right * move_delta;
-	}
-	if(g_app_state->m_move_dir_right)
-	{
-		g_app_state->m_camera_position += view_right * move_delta;
-	}
-	if(g_app_state->m_move_dir_up)
-	{
-		g_app_state->m_camera_position += view_up * move_delta;
-	}
-	if(g_app_state->m_move_dir_down)
-	{
-		g_app_state->m_camera_position -= view_up * move_delta;
-	}
+	if(g_app_state->m_move_dir_forward){ g_app_state->m_camera_position += view_forward * move_delta; }
+	if(g_app_state->m_move_dir_backward){ g_app_state->m_camera_position -= view_forward * move_delta; }
+	if(g_app_state->m_move_dir_left){ g_app_state->m_camera_position -= view_right * move_delta; }
+	if(g_app_state->m_move_dir_right){ g_app_state->m_camera_position += view_right * move_delta; }
+	if(g_app_state->m_move_dir_up){ g_app_state->m_camera_position += view_up * move_delta; }
+	if(g_app_state->m_move_dir_down){ g_app_state->m_camera_position -= view_up * move_delta; }
 
 	XMVECTOR const d3d11_eye = s_to_xmm_vector(g_app_state->m_camera_position);
 	XMVECTOR const d3d11_at = s_to_xmm_vector(g_app_state->m_camera_position + view_forward);
