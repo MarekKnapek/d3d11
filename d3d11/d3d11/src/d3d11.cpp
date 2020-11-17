@@ -29,6 +29,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <timeapi.h>
 #include <objbase.h>
 #include <dxgi.h>
 #include <directxmath.h>
@@ -52,6 +53,8 @@
 	#include "pixel_shader_debug.h"
 #endif
 
+
+#pragma comment(lib, "winmm.lib")
 
 #ifdef _M_IX86
 	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\dxgi.lib")
@@ -433,6 +436,10 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 		}
 	}
 
+	MMRESULT const faster_timer = timeBeginPeriod(1);
+	CHECK_RET(faster_timer == TIMERR_NOERROR, false);
+	auto const faster_timer_free = mk::make_scope_exit([&](){ MMRESULT const faster_timer_freed = timeEndPeriod(1); CHECK_RET_V(faster_timer_freed == TIMERR_NOERROR); });
+
 	HRESULT const com_initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
 	CHECK_RET(com_initialized == S_OK, false);
 	auto const com_uninitialize = mk::make_scope_exit([](){ CoUninitialize(); });
@@ -811,6 +818,23 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	g_app_state->m_frames_counter.rename("frames");
 	g_app_state->m_packet_coutner.rename("packets");
 
+	HANDLE timer;
+	static constexpr auto const timer_callback_ = [](void* const param, BOOLEAN const timer_or_wait_fired) -> void
+	{
+		(void)param;
+		(void)timer_or_wait_fired;
+		if(g_app_state->m_main_window == nullptr)
+		{
+			return;
+		}
+		BOOL const invalidated = InvalidateRect(g_app_state->m_main_window, nullptr, FALSE);
+		CHECK_RET_V(invalidated != 0);
+	};
+	static constexpr WAITORTIMERCALLBACK timer_callback = timer_callback_;
+	BOOL const timer_created = CreateTimerQueueTimer(&timer, nullptr, timer_callback, nullptr, 0, 4, WT_EXECUTEDEFAULT);
+	CHECK_RET(timer_created != 0, false);
+	auto const timer_free = mk::make_scope_exit([&](){ BOOL const timer_freed = DeleteTimerQueueTimer(nullptr, timer, INVALID_HANDLE_VALUE); CHECK_RET_V(timer_freed != 0); });
+
 	ShowWindow(g_app_state->m_main_window, SW_SHOW);
 
 	int exit_code;
@@ -1092,9 +1116,6 @@ bool process_message(MSG const& msg)
 
 bool on_idle()
 {
-	BOOL const invalidated = InvalidateRect(g_app_state->m_main_window, nullptr, FALSE);
-	CHECK_RET(invalidated != 0, false);
-
 	return true;
 }
 
@@ -1328,7 +1349,7 @@ bool render()
 		}
 	}while(false);
 
-	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(1, 0);
+	HRESULT const presented = g_app_state->m_d3d11_swap_chain->Present(0, 0);
 	CHECK_RET(presented == S_OK || presented == DXGI_STATUS_OCCLUDED, false);
 
 	return true;
