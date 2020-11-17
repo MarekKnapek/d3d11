@@ -28,20 +28,13 @@
 #include <vector>
 
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <timeapi.h>
 #include <objbase.h>
 #include <dxgi.h>
+#include <d3d11.h>
 #include <directxmath.h>
-#pragma warning(push)
-#pragma warning(disable:4005) // Macro redefinition.
-#include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\d3dx11core.h"
-#pragma warning(pop)
-#pragma warning(push)
-#pragma warning(disable:4838) // Narowwing conversion.
-#pragma warning(disable:4005) // Macro redefinition.
-#include "c:\\Users\\me\\Downloads\\dx\\dx9\\include\\xnamath.h"
-#pragma warning(pop)
 #include <winsock2.h>
 
 
@@ -55,42 +48,10 @@
 
 
 #pragma comment(lib, "winmm.lib")
-
-#ifdef _M_IX86
-	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\dxgi.lib")
-	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\dxguid.lib")
-#else
-	#ifdef _M_X64
-		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\dxgi.lib")
-		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\dxguid.lib")
-	#else
-		#error Unknown architecture.
-	#endif
-#endif
-
-
-#ifdef _M_IX86
-	#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\d3d11.lib")
-	#ifdef NDEBUG
-		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\d3dx11.lib")
-	#else
-		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x86\\d3dx11d.lib")
-	#endif
-#else
-	#ifdef _M_X64
-		#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\d3d11.lib")
-		#ifdef NDEBUG
-			#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\d3dx11.lib")
-		#else
-			#pragma comment(lib, "c:\\Users\\me\\Downloads\\dx\\dx9\\Lib\\x64\\d3dx11d.lib")
-		#endif
-	#else
-		#error Unknown architecture.
-	#endif
-#endif
-
-
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "d3d11.lib")
 
 
 static constexpr int const s_points_count = mk::equal_or_next_power_of_two(mk::vlp16::s_points_per_second);
@@ -175,9 +136,9 @@ struct my_vertex_t
 
 struct my_constant_buffer_t
 {
-	XMMATRIX m_world;
-	XMMATRIX m_view;
-	XMMATRIX m_projection;
+	DirectX::XMMATRIX m_world;
+	DirectX::XMMATRIX m_view;
+	DirectX::XMMATRIX m_projection;
 };
 
 
@@ -228,9 +189,9 @@ struct app_state_t
 	ID3D11VertexShader* m_d3d11_vertex_shader;
 	ID3D11PixelShader* m_d3d11_pixel_shader;
 	ID3D11Buffer* m_d3d11_constant_buffer;
-	XMMATRIX m_world;
-	XMMATRIX m_view;
-	XMMATRIX m_projection;
+	DirectX::XMMATRIX m_world;
+	DirectX::XMMATRIX m_view;
+	DirectX::XMMATRIX m_projection;
 	double3_t m_camera_position;
 	double33_t m_view_transform;
 	std::chrono::high_resolution_clock::time_point m_prev_time;
@@ -456,9 +417,6 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	CHECK_RET(window_size_refreshed, false);
 
 	/* D3D11 */
-	bool const d3d11_version_check = !FAILED(D3DX11CheckVersion(D3D11_SDK_VERSION, D3DX11_SDK_VERSION));
-	CHECK_RET(d3d11_version_check, false);
-
 	IDXGIFactory1* d3d11_factory;
 	HRESULT const d311_factory_created =  CreateDXGIFactory1(IID_IDXGIFactory1, reinterpret_cast<void**>(&d3d11_factory));
 	CHECK_RET(d311_factory_created == S_OK, false);
@@ -768,12 +726,12 @@ bool d3d11_app(int const argc, char const* const* const argv, int* const& out_ex
 	auto const d3d11_constant_buffer_free = mk::make_scope_exit([](){ g_app_state->m_d3d11_constant_buffer->Release(); g_app_state->m_d3d11_constant_buffer = nullptr; });
 	g_app_state->m_d3d11_constant_buffer = d3d11_constant_buffer;
 
-	g_app_state->m_world = XMMatrixIdentity();
+	g_app_state->m_world = DirectX::XMMatrixIdentity();
 
 	g_app_state->m_camera_position = double3_t{0.0, 0.0, 0.0};
 	g_app_state->m_view_transform = double33_t{double3_t{1.0, 0.0, 0.0}, double3_t{0.0, 1.0, 0.0}, double3_t{0.0, 0.0, 1.0}};
 
-	g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+	g_app_state->m_projection = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 
 	my_constant_buffer_t my_constant_buffer;
 	my_constant_buffer.m_world = XMMatrixTranspose(g_app_state->m_world);
@@ -959,7 +917,7 @@ LRESULT CALLBACK main_window_proc(_In_ HWND const hwnd, _In_ UINT const msg, _In
 				d3d11_view_port.MaxDepth = 1.0f;
 				g_app_state->m_d3d11_immediate_context->RSSetViewports(1, &d3d11_view_port);
 
-				g_app_state->m_projection = XMMatrixPerspectiveFovLH(XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
+				g_app_state->m_projection = DirectX::XMMatrixPerspectiveFovLH(DirectX::XM_PIDIV2, static_cast<float>(g_app_state->m_width) / static_cast<float>(g_app_state->m_height), 0.01f, 100.0f);
 			}
 		}
 		break;
@@ -1279,7 +1237,7 @@ bool render()
 	double3_t const view_up = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_up), g_app_state->m_view_transform));
 	double3_t const view_right = from_standard_to_d3d(rotate_double3_by_double33(from_d3d_to_standard(s_default_view_right), g_app_state->m_view_transform));
 
-	static constexpr auto const s_to_xmm_vector = [](double3_t const& x) -> XMVECTOR { return {static_cast<float>(x[0]), static_cast<float>(x[1]), static_cast<float>(x[2]), 0.0f}; };
+	static constexpr auto const s_to_xmm_vector = [](double3_t const& x) -> DirectX::XMVECTOR { return {static_cast<float>(x[0]), static_cast<float>(x[1]), static_cast<float>(x[2]), 0.0f}; };
 
 	if(g_app_state->m_move_dir_forward){ g_app_state->m_camera_position += view_forward * move_delta; }
 	if(g_app_state->m_move_dir_backward){ g_app_state->m_camera_position -= view_forward * move_delta; }
@@ -1288,10 +1246,10 @@ bool render()
 	if(g_app_state->m_move_dir_up){ g_app_state->m_camera_position += view_up * move_delta; }
 	if(g_app_state->m_move_dir_down){ g_app_state->m_camera_position -= view_up * move_delta; }
 
-	XMVECTOR const d3d11_eye = s_to_xmm_vector(g_app_state->m_camera_position);
-	XMVECTOR const d3d11_at = s_to_xmm_vector(g_app_state->m_camera_position + view_forward);
-	XMVECTOR const d3d11_up = s_to_xmm_vector(view_up);
-	g_app_state->m_view = XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
+	DirectX::XMVECTOR const d3d11_eye = s_to_xmm_vector(g_app_state->m_camera_position);
+	DirectX::XMVECTOR const d3d11_at = s_to_xmm_vector(g_app_state->m_camera_position + view_forward);
+	DirectX::XMVECTOR const d3d11_up = s_to_xmm_vector(view_up);
+	g_app_state->m_view = DirectX::XMMatrixLookAtLH(d3d11_eye, d3d11_at, d3d11_up);
 
 	my_constant_buffer_t my_constant_buffer;
 	my_constant_buffer.m_world = XMMatrixTranspose(g_app_state->m_world);
